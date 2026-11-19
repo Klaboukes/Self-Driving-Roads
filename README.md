@@ -20,7 +20,6 @@ The idea is a road system that drives the vehicles, instead of autonomous self-d
 | Document | What it covers |
 |---|---|
 | [SDR-01 Concept Architecture](SDR-01-Concept-Architecture.md) | The design: four control layers (network, segment, vehicle, road), safety principles, safety envelope, failure handling, efficiency mechanisms, vehicle standard, rollout, risks and the open design decisions D1–D12 |
-| [SDR-02 First Simulation Findings](SDR-02-Simulation-Findings.md) | Absolute vs relative separation, incidents, weather, energy. *Contains a correction about brake loss (see SDR-03).* |
 | [SDR-03 Hybrid separation, detection layers and the safety lane](SDR-03-Hybrid-Detection-Safety-Lane.md) | Hybrid separation tests; fences, roadside cameras, car sensors and V2V; the safety lane; a foreign-object risk model; full research data and sources |
 | [SDR-04 Viability Assessment](SDR-04-Viability-Assessment.md) | How viable and efficient SDR is, based on the simulations; confidence levels and what would change the verdict |
 | [simulator/README.md](simulator/README.md) | How to run the simulator and its tests, how the model works, parameters, limitations |

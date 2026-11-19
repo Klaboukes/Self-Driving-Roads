@@ -2,7 +2,7 @@
 
 > **The road plans. The car executes. A small onboard guardian can always say "stop."**
 
-Status: draft for discussion · 2026-11-18, updated 2026-11-19 with simulation results ([SDR-02](SDR-02-Simulation-Findings.md), [SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md)) and a viability assessment ([SDR-04](SDR-04-Viability-Assessment.md))
+Status: draft for discussion · 2026-11-18, updated 2026-11-19 with simulation results ([SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md)) and a viability assessment ([SDR-04](SDR-04-Viability-Assessment.md))
 End state: **100 % of vehicles on an SDR road are guided by the road**; there is no mixed traffic on SDR lanes.
 
 ---
@@ -224,7 +224,7 @@ These are the problems the design must solve, not reasons to stop.
 
 | # | Decision | Options | Initial lean |
 |---|---|---|---|
-| D1 | Separation policy | Absolute / relative / hybrid | ~~Absolute first~~ → **hybrid**: relative by default, absolute behind load-carrying vehicles, behind vehicles that report a fault, and where road sensing is degraded. No platoon breaks. About +9 % on today's road at 10 % trucks, no lost-load collisions (see [SDR-02](SDR-02-Simulation-Findings.md), [SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md)) |
+| D1 | Separation policy | Absolute / relative / hybrid | ~~Absolute first~~ → **hybrid**: relative by default, absolute behind load-carrying vehicles, behind vehicles that report a fault, and where road sensing is degraded. No platoon breaks. About +9 % on today's road at 10 % trucks, no lost-load collisions (see [SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md), [SDR-04](SDR-04-Viability-Assessment.md)) |
 | D2 | Positioning reference | GNSS-only / road markers / road observation | All three, with road observation authoritative |
 | D3 | Segment length | 500 m / 1–2 km / 5 km | ~1–2 km (to validate by simulation) |
 | D4 | Planning horizon | 3 s / 10 s / 30 s | ~10 s detailed plan + 1–3 s authority |
@@ -241,7 +241,7 @@ These are the problems the design must solve, not reasons to stop.
 
 ## 12. Suggested next steps
 
-1. ~~**Simulation prototype.**~~ Done: [simulator/](simulator/README.md), first results in [SDR-02](SDR-02-Simulation-Findings.md); hybrid separation, detection layers and the safety lane in [SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md).
+1. ~~**Simulation prototype.**~~ Done: [simulator/](simulator/README.md). Hybrid separation, detection layers and the safety lane are in [SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md); throughput, weather and the overall verdict in [SDR-04](SDR-04-Viability-Assessment.md).
 2. **Formal safety case.** Write down the safety argument (hazards → mitigations → evidence) in the structure used for railway and aviation certification. The foreign-object risk model ([simulator/risk-model.js](simulator/risk-model.js)) is a first piece; system failures (software faults, cyberattack, common-cause failures) are the missing other half.
 3. **Roadside sensing proof of concept.** Measure time-to-confirm and miss rate for pallet-, tyre- and deer-sized objects at 150 m, at night and in rain. This is the decisive engineering question ([SDR-04](SDR-04-Viability-Assessment.md)).
 4. **Sensor false alarms in simulation.** A false alarm costs capacity, a miss costs safety; find the operating point.

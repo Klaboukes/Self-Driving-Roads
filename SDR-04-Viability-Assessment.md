@@ -1,7 +1,7 @@
 # Self Driving Road (SDR): Viability and efficiency assessment
 
 Status: assessment, for discussion · 2026-11-19, revised the same day after a review of the simulator
-Based on: [SDR-01](SDR-01-Concept-Architecture.md) (architecture), [SDR-02](SDR-02-Simulation-Findings.md) (first simulation findings), [SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md) (hybrid separation, detection layers, safety lane)
+Based on: [SDR-01](SDR-01-Concept-Architecture.md) (architecture) and [SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md) (hybrid separation, detection layers, safety lane). It also replaces the first simulation report (SDR-02), which was retired when its figures were superseded.
 Data: [simulator/results/results.md](simulator/results/results.md)
 
 This answers the question *"How viable and efficient is SDR, based on the simulations?"*.
@@ -92,6 +92,29 @@ The gains come from three mechanisms. Only the second depends on the separation 
 The absolute gap behind trucks costs the hybrid 14 % of capacity at 10 % trucks and about 20 % at 20–30 %. That rule is what removes lost-load collisions (section 2), so it cannot simply be dropped. Ways to limit the cost that have not been simulated yet: exempt trucks whose load is enclosed and monitored (D10), give trucks their own lane, or let trucks follow trucks closely. The relative figures at 20–30 % trucks vary a lot between runs (±650 veh/h).
 
 Absolute separation is not an efficiency option. At motorway speed it carries half of today's road. It is the safe fallback mode.
+
+**Gates move the wait; they don't remove it.** Admission control keeps the road free of jams by holding excess demand at the entry. The longest wait of any vehicle still at a gate at the end of the 20-minute runs:
+
+| Main demand (veh/h) | Today's road | SDR hybrid | SDR relative | SDR absolute |
+|---|---|---|---|---|
+| 2,400 | 1 s | 33 s | 10 s | 6 min |
+| 3,600 | 1 s | 3 min | 34 s | 9 min |
+| 4,800 | 8 s | 11 min | 4 min | 11 min |
+| 6,000 | 3 min | 15 min | 12 min | 13 min |
+| 7,200 | 5 min | 14 min | 16 min | 14 min |
+
+A gate hides a capacity problem from the people on the road, but not from the people waiting at it. The mean trip delays above include these waits, so the average traveller is still better off once the road is busy. The longest waits are a fairness problem the gate logic has not solved: with the hybrid they are already long at 4,800 + 900 veh/h, which is below the most it can carry.
+
+**Weather.** At 3,600 + 600 veh/h, a demand every system except absolute can carry when dry:
+
+| Weather | Today's road | SDR hybrid | SDR relative | SDR absolute |
+|---|---|---|---|---|
+| Dry | 4,194 · 106 km/h | 4,194 · 109 km/h | 4,195 · 110 km/h | 2,773 · 105 km/h |
+| Wet | 4,244 · 94 km/h | 4,198 · 108 km/h | 4,205 · 110 km/h | 2,500 · 104 km/h |
+| Ice | 4,041 · 59 km/h | 3,499 · 83 km/h | 4,262 · 85 km/h | 1,182 · 81 km/h |
+
+- Absolute separation collapses on ice, because braking distances triple and the gaps with them. The hybrid loses capacity for the same reason behind every truck, and ends up below today's road.
+- **Relative separation barely notices ice, and that is a warning sign, not a strength.** It keeps its capacity because both vehicles brake equally badly. But on ice a brick-wall event is far more severe, and relative spacing gives no protection against it. The only thing that slows relative SDR on ice is one design rule: never drive faster than the guardian sensor can stop for within its range (about 85 km/h on ice). Whether 85 km/h at close spacing is acceptable on ice is a safety decision the simulation cannot make.
 
 **Radio quality costs capacity.** If authority messages are lost, the road widens every gap so that a run of lost messages rarely leaves a vehicle without authority. At 5 % loss the hybrid carries 7 % less, at 10 % loss 13 % less, at 20 % loss 21 % less. Without the widening, capacity stays the same but vehicles brake at full force: about 200 times per 15 minutes at 10 % loss and 2,300 times at 20 %. A reliable radio link is therefore an efficiency requirement, not only a safety one.
 

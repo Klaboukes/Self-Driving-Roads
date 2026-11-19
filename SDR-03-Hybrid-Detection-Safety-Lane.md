@@ -2,7 +2,7 @@
 
 Status: simulation results and desk research, for discussion · 2026-11-19
 **Figures updated (2026-11-19, review):** all simulation numbers below come from the re-run after the review: 10 runs per incident row and 5 per throughput row (was 6 and 2), and a today's road that now carries what a real motorway carries. The capacity comparison changed most: the hybrid is 9 % above today's road, not 36 %. See [SDR-04](SDR-04-Viability-Assessment.md) and the [changelog](simulator/CHANGELOG.md).
-Builds on: [SDR-01](SDR-01-Concept-Architecture.md) (architecture) and [SDR-02](SDR-02-Simulation-Findings.md) (first simulation findings)
+Builds on: [SDR-01](SDR-01-Concept-Architecture.md) (architecture) and the first simulation run of 2026-11-18. That run's report (SDR-02) was retired once its figures were superseded; current throughput and weather figures are in [SDR-04](SDR-04-Viability-Assessment.md).
 Raw results: [simulator/results/results.md](simulator/results/results.md) · Risk model: [simulator/results/risk-model.md](simulator/results/risk-model.md)
 
 ---
@@ -21,7 +21,7 @@ Raw results: [simulator/results/results.md](simulator/results/results.md) · Ris
 5. **The safety lane turns a breakdown from a lane closure into a non-event.** The road steers the faulty vehicle onto the safety lane while it is still rolling. All 10 broken-down vehicles got there, with no measurable delay to other traffic. Without a safety lane, the vehicle blocked a live lane until it was towed, costing about 6 vehicle-hours on average (today's road without a hard shoulder: about 15; both vary a lot between runs). The UK's experience after removing hard shoulders points the same way.
 6. **The risk model says it can work.** It needs SDR-grade sensing (≤1 s road detection, V2V) plus vehicles that report their own lost loads. Then objects cause fewer than 1 collision per billion vehicle-km, against about 10 debris crashes per billion vehicle-km and about 47 motorway casualties per billion vehicle-km today. **With today's detection technology, relative separation would be *worse* than human drivers for objects on the road.**
 
-**A correction to SDR-02.** SDR-02 reported 8 collisions after a sudden brake loss under relative separation. That was a flaw in my relative-separation formula, not physics. After a vehicle's brakes halved, the vehicle behind it assumed the weaker leader would stop more gently. So it was allowed to close up to a negative gap and bumped into it, which then caused a high-speed knock-on crash. The fix is a rule: a follower never assumes its leader stops more gently than the follower itself can. With it, brake loss causes **0 collisions under every SDR policy**.
+**A correction to the first simulation report.** That report gave 8 collisions after a sudden brake loss under relative separation. That was a flaw in my relative-separation formula, not physics. After a vehicle's brakes halved, the vehicle behind it assumed the weaker leader would stop more gently. So it was allowed to close up to a negative gap and bumped into it, which then caused a high-speed knock-on crash. The fix is a rule: a follower never assumes its leader stops more gently than the follower itself can. With it, brake loss causes **0 collisions under every SDR policy**.
 
 ---
 
@@ -33,7 +33,7 @@ Raw results: [simulator/results/results.md](simulator/results/results.md) · Ris
 | Detection layers | Road sensors confirm a new object with a set probability after 0.5 s. Each car's own sensor sees it within 120 m with a set probability, rolled per car. What a car sees can stay with that car, go to the road, or also go directly to nearby cars (V2V, 50 ms). |
 | New incidents | An object lands where the nearest car is about 150 m or 300 m away. A load falls off a truck just in front of the vehicle behind it. A vehicle breaks down (loses propulsion and coasts to a stop). A segment's road sensors fail. |
 | Safety lane | A lane to the right of lane 1. The road sends faulty, broken-down and radio-lost vehicles there with cooperative lane changes: not across the on-ramp or the exit. On today's road the same lane is a hard shoulder that broken-down drivers pull onto. |
-| Health detection delay | A brake fault is reported 0.5 s after it happens, or sooner once the vehicle tries to brake. In SDR-02 it was reported instantly. |
+| Health detection delay | A brake fault is reported 0.5 s after it happens, or sooner once the vehicle tries to brake. In the first run it was reported instantly. |
 
 Four control flaws showed up while testing breakdowns, and all four are fixed. They are design lessons for the real system, not just simulator bugs:
 

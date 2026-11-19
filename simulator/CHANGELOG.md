@@ -46,6 +46,7 @@ Result (section 11 of the results, `--only=today`): the plain road carries 5,680
 - **Regression tests** ([test/engine.test.js](test/engine.test.js), `node --test simulator/test`): reproducibility, identical traffic in both worlds, no SDR collisions or authority overruns (also with radio loss), a free-flowing baseline, fail-safe incident responses.
 - **Risk model** reads the collisions per brick-wall event from the latest results instead of a hand-copied number.
 - `package.json` with `test`, `experiments`, `risk` and `serve` scripts; the project is now a git repository.
+- **SDR-02 retired.** The first simulation report compared SDR with the old, too-weak today's road. Its two findings that were not recorded elsewhere (gates move the wait to the entry; relative separation ignoring ice is a warning sign) are now in [SDR-04](../SDR-04-Viability-Assessment.md) with current figures.
 - **UI:** hybrid is the starting policy; the SDR header shows how much the gaps were widened for radio loss.
 
 ### Findings that changed conclusions
@@ -95,7 +96,7 @@ Result (section 11 of the results, `--only=today`): the plain road carries 5,680
   - Hybrid curve on the capacity chart (categorical slot 4, validated for colour-blind separation).
 
 ### Fixed
-- **Relative separation behind a weak-braking leader.** The relative EoA assumed the leader stops at *its* maximum braking. Behind a brake-degraded leader (or a truck), the follower's required gap became negative, so it closed up and bumped into the leader, causing a high-speed knock-on crash. The SDR-02 brake-loss collisions came from this.
+- **Relative separation behind a weak-braking leader.** The relative EoA assumed the leader stops at *its* maximum braking. Behind a brake-degraded leader (or a truck), the follower's required gap became negative, so it closed up and bumped into the leader, causing a high-speed knock-on crash. The brake-loss collisions in the first simulation report came from this.
   - Fix: assume the leader brakes at least as hard as the follower's own planning deceleration.
   - **Lesson:** a weaker leader must never license a shorter gap.
 - **Gridlock beside a blockage.** With a broken-down vehicle stopped in lane 0 just before the exit, exiting vehicles in lane 1 kept a soft constraint behind lane-0 vehicles that were queued behind the blockage. They stopped beside it and blocked lane 1 too.
@@ -123,7 +124,7 @@ Result (section 11 of the results, `--only=today`): the plain road carries 5,680
 
 ---
 
-## 2026-11-18: First version (→ [SDR-02](../SDR-02-Simulation-Findings.md))
+## 2026-11-18: First version (its report, SDR-02, was retired on 2026-11-19 and is in the git history)
 
 ### Built
 - `engine.js`: 5 km, 3-lane corridor with on-ramp and exit, two worlds fed the same demand.
