@@ -6,8 +6,8 @@
  *   'sdr'   – Self Driving Road: segment controllers issue movement authorities
  *             (end-of-authority, EoA) to vehicles; vehicles track them; a guardian
  *             sensor may only brake.
- *   'human' – Baseline: Intelligent Driver Model (IDM) with reaction delay and a
- *             MOBIL-style lane change model.
+ *   'human' – Baseline ("today's road"): IDM+ car following with reaction delay, headway
+ *             relaxation after lane changes and a MOBIL-style lane change model.
  *
  * Pure JS, no DOM. Works in the browser (window.SDR) and in Node (require).
  */
@@ -68,7 +68,7 @@
     friction: 1.0,            // 1.0 dry, 0.7 wet, 0.3 ice
 
     // SDR policy
-    separation: 'absolute',   // 'absolute' (brick-wall) | 'relative' | 'hybrid'
+    separation: 'hybrid',     // 'absolute' (brick-wall) | 'relative' | 'hybrid' (the recommended policy, decision D1)
     // hybrid = relative by default, absolute (brick-wall) gap where the risk is higher:
     platoonBreakEvery: 0,     //   every Nth vehicle keeps an absolute gap to its leader (0 = off; tested, did not pay off)
     hybridHealthAbsolute: true, // behind a vehicle that reports a fault
@@ -80,6 +80,8 @@
     commsLatency: 0.05,       // one-way message latency (s)
     packetLoss: 0.0,          // probability a plan message is lost
     authorityTTL: 1.5,        // authority expires this long after it was computed (s)
+    lossAdaptive: true,       // the road measures radio loss and widens every vehicle's stale-authority allowance to match
+    lossTolerance: 1e-4,      //   target chance per control cycle that a run of lost messages outlasts the allowance
     actuationDelay: 0.2,      // vehicle actuator delay (s)
     margin: 2.0,              // fixed safety margin (m)
     positionUncertainty: 0.5, // positioning error allowance (m)
@@ -120,9 +122,31 @@
     truck: { length: 16.5, aMax: 0.8, bMax: 6.0, bComfort: 2.0, vMax: 25.0 },
   };
 
+  // Human driver model constants (today's road). IDM+ and headway relaxation after lane changes follow
+  // Schakel, Knoop & van Arem (2012, LMRS) and Laval & Leclercq (2008).
+  const HUMAN = {
+    Tmin: 0.6,        // shortest headway accepted right after a lane change (s)
+    relaxTime: 20,    // time constant for relaxing back to the preferred headway (s)
+    T: 1.4,           // mean preferred time headway (s)
+    bDisc: 1.5,       // braking an optional lane change may cause for the new follower or the changer (m/s²)
+    bSafe: 3.0,       // same for a lane change the driver has to make (merging, reaching the exit); rises with urgency
+    bSync: 1.5,       // braking a merging driver uses to line up with a gap (m/s²), +1.5 at the end of the lane
+    syncDist: 100,    // starts lining up this far before the acceleration lane (m)
+    mergeCourtesy: 0.6, // extra pull to the left for right-lane drivers who see traffic coming down the on-ramp (m/s²)
+    bYield: 3.0,      // braking a courteous driver uses to let someone in (m/s²)
+    noise: 0.1,       // standard deviation of the acceleration error (m/s²)
+    noiseTime: 1.5,   // its correlation time (s)
+    entryT: 1.0,      // headway at the corridor entry, as a fraction of the driver's preferred headway
+    gripRef: 5.0,     // braking habits are scaled down once the road offers less than this (m/s²): not in the wet, clearly on ice
+    plus: true,       // IDM+ (false: plain IDM, for comparison)
+    bOpen: 1.0,       //   braking beyond what the kinematics need, used to open such a gap again (m/s²)
+    cool: 0.99,       // weight of the constant-acceleration heuristic (0 = plain IDM reaction to short gaps)
+    exitSync: 600,    // an exiting driver starts lining up with the lane to the right when this much road is left per lane change (m)
+  };
+
   // ---------------------------------------------------------------- theory
   // Steady-state lane capacity (veh/h) for SDR at speed v (m/s), cars only.
-  function sdrGapTerms(cfg, separation) {
+  function sdrGapTerms(cfg, separation, extraTau) {
     const t = TYPES.car;
     const bEff = Math.min(t.bMax, cfg.friction * G * 0.95);
     const bOwn = 0.9 * bEff;
@@ -135,7 +159,7 @@
             : separation === 'hybrid' ? cRel + (cAbs - cRel) * absShare
             : cAbs;
     const fixed = t.length + cfg.margin + cfg.positionUncertainty + 2;          // + 2 m control buffer
-    const tau = cfg.actuationDelay + cfg.controlPeriod + cfg.commsLatency + 0.1; // reaction + stale-authority allowance
+    const tau = cfg.actuationDelay + cfg.controlPeriod + cfg.commsLatency + 0.1 + (extraTau || 0); // reaction + stale-authority allowance
     return { c, fixed, tau };
   }
   function sdrCapacity(cfg, separation, v) {
@@ -148,8 +172,8 @@
     return Math.sqrt(g.fixed / g.c);
   }
   function humanCapacity(cfg, v) {
-    // IDM steady state: gap = s0 + v*T, mean T = 1.4 s (longer in bad weather)
-    const T = 1.4 * (cfg.friction < 0.5 ? 1.4 : cfg.friction < 0.9 ? 1.15 : 1);
+    // IDM+ steady state: gap = s0 + v*T, mean T = HUMAN.T (longer in bad weather)
+    const T = HUMAN.T * (cfg.friction < 0.5 ? 1.4 : cfg.friction < 0.9 ? 1.15 : 1);
     return 3600 * v / (TYPES.car.length + 2 + v * T);
   }
 
@@ -178,6 +202,8 @@
       this.vLimit = c.speedLimit;
       this.bottleneckRatio = 1;
       this.occupancy = 0; this.occupancyBudget = Infinity;
+      this.lossEst = 0;        // radio loss rate as measured by the road (share of authority messages not acknowledged)
+      this.staleExtra = 0;     // extra stale-authority allowance (s) the road adds to every buffer because of it
       this.segments = [];
       for (let s = 0; s * c.segmentLength < c.length; s++) {
         this.segments.push({ start: s * c.segmentLength, end: Math.min(c.length, (s + 1) * c.segmentLength), failed: false, sensorsDown: false });
@@ -223,7 +249,8 @@
         id: this.nextId++, type, origin, exits,
         length: T.length, aMax: T.aMax, bMax: T.bMax, bComfort: T.bComfort, vMaxType: T.vMax,
         hv0: isTruck ? clamp(24 + g1, 22, 25.5) : clamp(34.5 + 2 * g1, 29, 40),
-        hT: clamp(1.4 + 0.25 * g2, 0.9, 2.2),
+        hT: clamp(HUMAN.T + 0.25 * g2, HUMAN.T - 0.5, HUMAN.T + 0.8),
+        hTc: 0, hNoise: 0,                            // current (relaxing) headway; correlated acceleration noise
         hReact: clamp(0.55 + 0.1 * g3, 0.35, 0.8),
         hSurprise: clamp(0.7 + 0.2 * g4, 0.4, 1.2),   // extra perception time for unexpected events
         tArrive: this.t, tEnter: null, xEnter: 0,
@@ -266,7 +293,23 @@
       const d = c.guardianRange - c.margin;
       return b * (-tau + Math.sqrt(tau * tau + 2 * d / b));
     }
-    _buffer(v) { const c = this.cfg; return 2 + v * (c.controlPeriod + c.commsLatency + 0.1); }
+    // control buffer: 2 m plus the distance covered while an authority may be stale. `allow` is the extra
+    // allowance for radio loss (the vehicle uses the value sent with its authority, the road its current one)
+    _buffer(v, allow) { const c = this.cfg; return 2 + v * (c.controlPeriod + c.commsLatency + 0.1 + (allow === undefined ? this.staleExtra : allow)); }
+
+    // Where the vehicle comes to rest if it commands full braking (b) from now on. Commands already in
+    // the actuator pipeline still execute first; `next` is an optional command issued this step before
+    // the braking starts.
+    _stopCommitted(v, b, next) {
+      const dt = this.cfg.dt, buf = v.buf, n = buf.length + (next === undefined ? 0 : 1);
+      let x = v.x, s = v.v;
+      for (let i = 0; i < n; i++) {
+        const a = clamp(i < buf.length ? buf[i] : next, -b, v.aMax);
+        const sn = Math.max(0, s + a * dt);
+        x += (s + sn) / 2 * dt; s = sn;
+      }
+      return x + s * s / (2 * b);
+    }
 
     _stopPoint(v, b) {
       const tau = this.cfg.actuationDelay;
@@ -471,6 +514,7 @@
       const c = this.cfg;
       v.x = x; v.lane = lane; v.v = speed; v.a = 0;
       v.tEnter = this.t; v.xEnter = x - v.length;
+      v.hTc = v.hT;
       const delay = c.mode === 'sdr' ? c.actuationDelay : v.hReact;
       v.buf = new Array(Math.max(1, Math.round(delay / c.dt))).fill(0);
       v.nextLaneEval = this.t + this.rng() * 0.5;
@@ -494,16 +538,18 @@
         const fb = this._failedBoundaryAhead(x);
         if (fb !== null) e = Math.min(e, fb - c.margin);
         const b = this._bOwn(v);
-        const tau = c.actuationDelay + c.controlPeriod + c.commsLatency + 0.1;
+        const tau = c.actuationDelay + c.controlPeriod + c.commsLatency + 0.1 + this.staleExtra;
         const d = e - x - 2;
         if (d <= 0) return -1;
         const vs = b * (-tau + Math.sqrt(tau * tau + 2 * d / b));
         const v0 = Math.min(vTarget, vs);
         return v0 >= Math.min(0.5 * vTarget, lead.v) && v0 > 0.5 ? v0 : -1;
       }
-      const T = v.hT * this._humanTFactor();
-      const v0 = Math.min(vTarget, lead.v + 2, Math.max(0, (gap - 2) / (0.8 * T)));
-      return v0 >= Math.min(0.5 * vTarget, lead.v) && gap > 2 + 0.8 * T * v0 ? v0 : -1;
+      // enter in equilibrium with the vehicle ahead (its speed, the driver's own headway), so the entry
+      // itself does not send a braking wave back into the inflow
+      const T = v.hT * this._humanTFactor() * HUMAN.entryT;
+      const v0 = Math.min(vTarget, lead.v + 1, Math.max(0, (gap - 2.5) / T));
+      return v0 >= Math.min(vTarget, lead.v) - 0.5 && v0 > 0.5 ? v0 : -1;
     }
 
     _spawn() {
@@ -516,19 +562,32 @@
       const metered = sdr && (this.occupancy >= this.occupancyBudget - reserve ||
                               (this.bottleneckRatio < 0.5 && this.occupancy > 0.6 * this.occupancyBudget));
       if (this.mainQueue.length && (!sdr || this._segmentAlive(0)) && !metered) {
-        const v = this.mainQueue[0];
-        const x0 = v.length;
-        let best = -1, bestV = -1;
-        for (let L = 0; L < c.lanes; L++) {
-          if (v.type === 'truck' && L > 1) continue;
-          // network-level admission: keep lane 0 free for the ramp when its queue builds up
-          if (sdr && L === 0 && this.rampQueue.length > 2 && v.type === 'car') continue;
-          let s = this._entrySpeed(v, x0, L);
-          if (v.exits && L === 0 && s > 0) s *= 1.15;     // pre-position exiting traffic (SDR: trip booking; humans: know their exit)
-          if (s > bestV + 0.01) { bestV = s; best = L; }
+        // The waiting traffic is as wide as the road: a vehicle that has to wait for its lane (a truck
+        // for the right lanes) does not hold up the vehicles behind it, which may use the other lanes.
+        // The lanes it is waiting for are kept for it, so it cannot be overtaken forever.
+        const reserved = [];
+        const scan = Math.min(this.mainQueue.length, 6);
+        for (let qi = 0; qi < scan; qi++) {
+          const v = this.mainQueue[qi];
+          const x0 = v.length;
+          let best = -1, bestV = -1, restricted = false;
+          for (let L = 0; L < c.lanes; L++) {
+            if (v.type === 'truck' && L > (sdr ? 1 : 0)) { restricted = true; continue; }   // trucks keep right (human drivers: right lane)
+            if (reserved[L]) continue;
+            // network-level admission: keep lane 0 free for the ramp when its queue builds up
+            if (sdr && L === 0 && this.rampQueue.length > 2 && v.type === 'car') continue;
+            let s = this._entrySpeed(v, x0, L);
+            if (v.exits && L === 0 && s > 0) s *= 1.15;     // pre-position exiting traffic (SDR: trip booking; humans: know their exit)
+            if (s > bestV + 0.01) { bestV = s; best = L; }
+          }
+          if (best >= 0) {
+            bestV = Math.min(bestV, this._entrySpeed(v, x0, best));
+            this.mainQueue.splice(qi, 1); this._initVehicle(v, x0, best, bestV);
+            break;
+          }
+          if (!restricted) break;                           // no lane has room for a car: nobody behind it gets in either
+          for (let L = 0; L <= (sdr ? 1 : 0); L++) reserved[L] = true;
         }
-        if (best >= 0) bestV = Math.min(bestV, this._entrySpeed(v, x0, best));
-        if (best >= 0) { this.mainQueue.shift(); this._initVehicle(v, x0, best, bestV); }
       }
       // on-ramp
       if (this.rampQueue.length && (!sdr || this._segmentAlive(c.rampStartX))) {
@@ -558,7 +617,7 @@
       const dAcc = Math.max(0, (vL * vL - v0 * v0) / (2 * a));
       const tArr = dist <= dAcc ? (-v0 + Math.sqrt(v0 * v0 + 2 * a * dist)) / a : (vL - v0) / a + (dist - dAcc) / vL;
       const vArr = Math.min(vL, Math.sqrt(v0 * v0 + 2 * a * dist));
-      const g = sdrGapTerms(c, c.separation);
+      const g = sdrGapTerms(c, c.separation, this.staleExtra);
       const need = g.fixed + g.tau * vArr + g.c * vArr * vArr + 5;
       for (const L of [0, -1]) {
         for (const o of this.lists[L + 1]) {
@@ -586,14 +645,30 @@
       }
       this._virtualMerge();
       this._monitorBottleneck();
+      let sent = 0, lost = 0;
       for (const v of this.vehicles) {
         if (v.crashed || v.disabled || v.stalled) continue;
         if (!this._segmentAlive(v.x)) continue;       // no controller → no authority
         const plan = this._computePlan(v);
         if (this.t < v.commsDownUntil) continue;      // message never arrives
-        if (this.rng() < c.packetLoss) continue;
+        sent++;
+        if (this.rng() < c.packetLoss) { lost++; continue; }
         v.inbox.push({ deliverAt: this.t + c.commsLatency, plan });
       }
+      this._measureLoss(sent, lost);
+    }
+
+    // The road sees which authorities were acknowledged, so it knows the radio loss rate. It sizes the
+    // stale-authority allowance so that a run of lost messages long enough to outlast it is rare
+    // (lossTolerance per cycle): radio loss then costs capacity instead of causing full-force braking.
+    // About two cycles of slack are already in every buffer.
+    _measureLoss(sent, lost) {
+      const c = this.cfg;
+      if (sent) this.lossEst += 0.02 * (lost / sent - this.lossEst);      // ~5 s smoothing
+      const p = this.lossEst;
+      this.staleExtra = c.lossAdaptive && p > 0.002
+        ? Math.min(3, c.controlPeriod * Math.max(0, Math.log(c.lossTolerance) / Math.log(Math.min(p, 0.99)) - 2))
+        : 0;
     }
 
     _updateSpeedPolicy() {
@@ -613,7 +688,7 @@
       let e = Infinity, r = 0, lv = 0;
       for (const L of this._lanesOf(v)) {
         const o = this._ahead(L, v.x, v, true);
-        if (o) { const k = this._eoaBehind(o, v); if (k.e < e) { e = k.e; r = k.r; lv = k.lv; } }
+        if (o && !(o.isWall && v.laneTo !== null)) { const k = this._eoaBehind(o, v); if (k.e < e) { e = k.e; r = k.r; lv = k.lv; } }
       }
       const fb = this._failedBoundaryAhead(v.x);
       if (fb !== null) {
@@ -626,7 +701,7 @@
       v._granted = e;
       let se = e, sr = r, slv = lv;
       if (v._soft) for (const s of v._soft) if (s.e < se) { se = s.e; sr = s.r; slv = s.lv; }
-      return { tMeas: this.t, eoa: e, rate: r, leadV: lv, softEoa: se, softRate: sr, softLeadV: slv, vLimit: this._vLimit(v) };
+      return { tMeas: this.t, eoa: e, rate: r, leadV: lv, softEoa: se, softRate: sr, softLeadV: slv, vLimit: this._vLimit(v), allow: this.staleExtra };
     }
 
     _rampNear(x, range) {
@@ -679,7 +754,7 @@
       this.bottleneckRatio = n ? s / n : 1;
       // occupancy budget for the stretch from the entry to just past the merge: vehicles that
       // fit at the critical (capacity) density for the current speed and separation policy
-      const g = sdrGapTerms(c, c.separation);
+      const g = sdrGapTerms(c, c.separation, this.staleExtra);
       const v = this.vLimit;
       const meanLen = TYPES.car.length + c.truckShare * (TYPES.truck.length - TYPES.car.length);
       const spacing = g.fixed - TYPES.car.length + meanLen + g.tau * v + g.c * v * v;
@@ -815,7 +890,7 @@
       v.mode = 'auto';
       const age = t - p.tMeas;
       const sp = this._stopPoint(v, bO);
-      const buf = this._buffer(v.v);
+      const buf = this._buffer(v.v, p.allow);
       const denom = c.actuationDelay + v.v / bO + 0.05;
       const k = 0.6;
       const eH = p.eoa + p.rate * age, eS = p.softEoa + p.softRate * age;
@@ -829,10 +904,13 @@
       const aF = clamp(0.5 * (p.vLimit - v.v), -v.bComfort, v.aMax);
       let a = Math.min(aF, aH, aS, v.aMax);
       if (v.broken && v.lane === this.S) a = Math.min(a, -1.5);     // broken down: stop in the safety lane
-      // supervision: the stale (non-extrapolated) authority must always be respected
-      const spare = p.eoa - this._stopPoint(v, bE);
+      // supervision: the stale (non-extrapolated) authority must always be respected with guaranteed
+      // braking. `spare` is the true distance left: commands already in the actuator pipeline are
+      // counted, then full braking. If issuing `a` now would leave no way to stop next step, brake now,
+      // so the granted authority is never overrun (not even by one time step).
+      const spare = p.eoa - this._stopCommitted(v, bE);
       if (spare < this.m.minSpare && v.x > 50) this.m.minSpare = spare;
-      if (spare < 0) {
+      if (p.eoa - this._stopCommitted(v, bE, a) < 0) {
         a = -bE;
         if (!v.supervising) { this.m.supervision++; v.supervising = true; }
       } else v.supervising = false;
@@ -898,13 +976,21 @@
     // drivers' desired speed: personal preference around the limit, slower in bad weather; trucks are governed
     _humanV0(v) { return v.hv0 * this._humanSpeedFactor() * (v.type === 'truck' ? 1 : this.cfg.speedLimit / 33.3); }
     _humanTFactor() { const f = this.cfg.friction; return f < 0.5 ? 1.4 : f < 0.9 ? 1.15 : 1; }
+    // on a slippery road drivers also brake more gently: every "acceptable braking" habit (comfortable
+    // braking, what a lane change may cost someone, yielding) shrinks with the grip that is left
+    _humanGrip() { return clamp(this.cfg.friction * G * 0.95 / HUMAN.gripRef, 0.3, 1); }
 
     // Human Driver Model: IDM evaluated on states extrapolated over the driver's reaction
     // time (the command is applied that much later), i.e. drivers anticipate.
-    _idm(v, o, noAnticipation) {
+    // IDM+ (Schakel et al.): acceleration is the smaller of the free-road and the car-following term, so
+    // the steady-state gap is s0 + v·T at any speed (plain IDM adds the two and keeps far larger gaps
+    // near the desired speed). T is the driver's *current* headway, which relaxes back to the preferred
+    // one after a lane change; `Tover` overrides it (gap acceptance, yielding, synchronising).
+    _idm(v, o, noAnticipation, Tover) {
       const v0 = this._humanV0(v);
-      const T = v.hT * this._humanTFactor();
-      const aM = v.aMax, b = 2.0;
+      const T = (Tover !== undefined ? Tover : v.hTc || v.hT) * this._humanTFactor();
+      const grip = this._humanGrip();
+      const aM = v.aMax, b = 2.0 * grip;
       // constant-velocity extrapolation of both vehicles; own acceleration is only
       // extrapolated when speeding up (never assumes it will "brake its way out")
       let v0x = v0;
@@ -916,23 +1002,53 @@
       const tau = noAnticipation ? 0 : v.hReact;
       const aUp = Math.max(0, v.a);
       const vp = v.v + aUp * tau;
-      const free = 1 - Math.pow(vp / v0x, 4);
+      const free = Math.max(-b / aM, 1 - Math.pow(vp / v0x, 4));   // above the desired speed: ease off, no hard braking
       if (!o) return aM * free;
       const vl = o.isObstacle ? 0 : o.v;
       const s = Math.max(0.1, o.x - o.length - v.x - (v.v - vl) * tau - 0.5 * aUp * tau * tau);
       const dv = vp - vl;
       const sStar = 2 + Math.max(0, vp * T + vp * dv / (2 * Math.sqrt(aM * b)));
-      return aM * (free - (sStar / s) * (sStar / s));
+      const inter = (sStar / s) * (sStar / s);
+      let acc = HUMAN.plus ? aM * Math.min(free, 1 - inter) : aM * (free - inter);
+      if (HUMAN.cool > 0) {
+        // Constant-acceleration heuristic (Kesting, Treiber & Helbing 2010): a gap that is short but not
+        // closing dangerously (typically right after someone cut in) is opened with comfortable braking,
+        // not with the emergency braking plain IDM would ask for.
+        const al = Math.min(o.isObstacle ? 0 : (o.a || 0), aM), dvp = Math.max(0, dv);
+        const cah = al < 0 && vl * dv <= -2 * s * al ? vp * vp * al / (vl * vl - 2 * s * al) : al - dvp * dvp / (2 * s);
+        const bOpen = HUMAN.bOpen * grip;
+        if (acc < cah) acc = (1 - HUMAN.cool) * acc + HUMAN.cool * (cah + bOpen * Math.tanh((acc - cah) / bOpen));
+      }
+      return acc;
+    }
+
+    // headway a driver would hold right after ending up `gap` metres behind a new leader: drivers accept
+    // a short gap for a while after a lane change and then relax back (Laval & Leclercq; Schakel et al.)
+    _relaxedT(f, gap) { return clamp((gap - 2) / Math.max(f.v, 1), HUMAN.Tmin, f.hTc || f.hT); }
+    // can follower f, reacting after `react` s, match the speed of leader l with moderate braking b?
+    _kinOk(f, l, gap, react, b) {
+      const dv = f.v - (l.isObstacle ? 0 : l.v);
+      if (dv <= 0) return gap > 0.5;
+      const room = gap - dv * react - 1;
+      return room > 0 && dv * dv / (2 * room) < b;
+    }
+    _humanStartLaneChange(v, L, lead, fol) {
+      if (lead) v.hTc = this._relaxedT(v, lead.x - lead.length - v.x);
+      if (fol && !fol.isObstacle && fol.hT) fol.hTc = this._relaxedT(fol, v.x - v.length - fol.x);
+      this._startLaneChange(v, L);
     }
 
     // what a human driver perceives ahead: debris is only noticed within sight distance
     _humanAhead(lane, v) {
       const o = this._ahead(lane, v.x, v, false);
+      if (o && o.isWall && v.laneTo !== null) return null;     // already moving out of the acceleration lane
       if (o && o.isObstacle && !o.isWall && o.x - o.length - v.x > this.cfg.humanSightDebris) return null;
       return o;
     }
 
     _humanCommand(v) {
+      const c = this.cfg;
+      v.hTc += (v.hT - v.hTc) * c.dt / HUMAN.relaxTime;
       if (v.broken) {
         // lost propulsion: hazard lights, work right and onto the hard shoulder if there is one
         if (this.t >= v.nextLaneEval) { v.nextLaneEval = this.t + 0.5; this._humanPullOver(v); }
@@ -950,11 +1066,29 @@
       if (this.t < v.surpriseUntil) return v.frozenCmd;
       let a = Infinity;
       for (const L of this._lanesOf(v)) a = Math.min(a, this._idm(v, this._humanAhead(L, v)));
+      // on the acceleration lane: adjust speed to slot in behind the vehicle ahead in the right lane
+      if (v.lane === -1 && v.laneTo === null && v.x > c.mergeStart - HUMAN.syncDist) {
+        const tl = this._humanAhead(0, v);
+        if (tl && !tl.isObstacle && !this._isStatic(tl) && tl.v < v.v + 1) {    // a faster vehicle pulls away by itself
+          const urg = clamp((v.x - c.mergeStart) / (c.mergeEnd - c.mergeStart), 0, 1);
+          a = Math.min(a, Math.max(-(HUMAN.bSync + 1.5 * urg) * this._humanGrip(), this._idm(v, tl, false, HUMAN.Tmin)));
+        }
+      }
+      // close to the exit and still not in the right lane: line up with the lane to the right
+      if (v.exits && v.lane > 0 && v.laneTo === null && v.x < c.offRampX) {
+        const per = (c.offRampX - v.x) / v.lane;
+        if (per < HUMAN.exitSync) {
+          const tl = this._humanAhead(v.lane - 1, v);
+          if (tl && !tl.isObstacle && !this._isStatic(tl) && tl.v < v.v + 1) a = Math.min(a, Math.max(-(0.5 + HUMAN.bSync * (1 - per / HUMAN.exitSync)) * this._humanGrip(), this._idm(v, tl, false, HUMAN.Tmin)));
+        }
+      }
       // courteous driver letting a signalling vehicle in
       const y = v.yieldTo;
-      if (y && this.t < v.yieldUntil && !y.crashed && y.v > 3 && y.x - y.length > v.x && this.vehicles.includes(y)) a = Math.min(a, Math.max(-3, this._idm(v, y)));
+      if (y && this.t < v.yieldUntil && !y.crashed && y.v > 3 && y.x - y.length > v.x && !y.gone) a = Math.min(a, Math.max(-HUMAN.bYield * this._humanGrip(), this._idm(v, y, false, HUMAN.Tmin)));
       else v.yieldTo = null;
-      a += 0.15 * gauss(this.rng);
+      // imperfect driving: slowly varying acceleration error (Ornstein-Uhlenbeck, independent of the time step)
+      v.hNoise += -v.hNoise * c.dt / HUMAN.noiseTime + HUMAN.noise * Math.sqrt(2 * c.dt / HUMAN.noiseTime) * gauss(this.rng);
+      a += v.hNoise;
       v.lastCmd = clamp(a, -this._bEff(v), v.aMax);
       return v.lastCmd;
     }
@@ -966,8 +1100,8 @@
       const lead = this._humanAhead(L, v), fol = this._behind(L, v.x, v, false);
       let ok = !(lead && lead.x - lead.length < v.x + 2 + 0.3 * v.v);
       if (ok && fol && fol.x > v.x - v.length - 2 - 0.3 * (fol.v || 0)) ok = false;
-      if (ok && fol && !fol.isObstacle && !this._isStatic(fol) && this._idm(fol, v, true) < -6) ok = false;
-      if (ok) { this._startLaneChange(v, L); return; }
+      if (ok && fol && !fol.isObstacle && !this._isStatic(fol) && this._idm(fol, v, true) < -6 * this._humanGrip()) ok = false;
+      if (ok) { this._humanStartLaneChange(v, L, lead, fol); return; }
       if (fol && !fol.isObstacle && !fol.yieldTo && v.v > 3 && v.x - fol.x < 60 && this.rng() < 0.5) { fol.yieldTo = v; fol.yieldUntil = this.t + 5; }
     }
 
@@ -982,7 +1116,7 @@
         if (v.lane < c.lanes - 1 && !(v.type === 'truck' && v.lane >= 1)) cands.push(v.lane + 1);
       }
       const aCur = this._idm(v, this._humanAhead(v.lane, v));
-      let best = null, bestScore = 0.25, wanted = null;
+      let best = null, bestScore = 0.25, wanted = null, bestLead = null, bestFol = null;
       const mandatoryFor = L => v.lane === -1 || (v.exits && L < v.lane && v.x > c.offRampX - c.exitPrepDist && v.x < c.offRampX);
       for (const L of cands) {
         if (v.exits && v.lane >= 0 && L > v.lane && v.x > c.offRampX - c.exitPrepDist - 1000) continue; // no overtaking close to your exit
@@ -991,29 +1125,42 @@
         // gap acceptance shrinks for a driver running out of acceleration lane
         let forced = v.lane === -1 ? clamp((v.x - c.mergeStart) / (c.mergeEnd - c.mergeStart), 0, 1) : 0;
         if (v.exits && L < v.lane && v.x > c.offRampX - c.exitPrepDist) forced = 0.5 * clamp(1 - (c.offRampX - v.x) / c.exitPrepDist, 0, 1);
-        const hw = 0.4 * (1 - 0.6 * forced);
-        if (lead && lead.x - lead.length < v.x + 2 + hw * v.v) continue;
-        if (fol && fol.x > v.x - v.length - 2 - hw * (fol.v || 0)) continue;
-        let bSafe = 4, bias = 0;
+        const hw = HUMAN.Tmin * (1 - 0.5 * forced);
+        const gLead = lead ? lead.x - lead.length - v.x : Infinity;
+        const gFol = fol ? v.x - v.length - fol.x : Infinity;
+        if (gLead < 2 + hw * v.v) continue;
+        if (fol && gFol < 2 + hw * (fol.v || 0)) continue;
+        let bSafe = HUMAN.bDisc, bias = 0;
         if (v.lane === -1) {
-          bSafe = 4 + 4 * forced; bias = 5;
+          bSafe = HUMAN.bSafe + 2 * forced; bias = 5;
         } else {
           bias += L < v.lane ? 0.2 : -0.2; // keep right
+          // make room for merging traffic: drivers in the right lane who see vehicles on the on-ramp move over if they can
+          if (v.lane === 0 && L === 1 && v.type === 'car' && !v.exits && v.x > c.mergeStart - 400 && v.x < c.mergeEnd && this._rampNear(v.x + 60, 160)) bias += HUMAN.mergeCourtesy;
           if (v.exits && v.x <= c.offRampX - c.exitPrepDist) bias += L < v.lane ? 0.5 : -0.5; // keep right early
           if (v.exits && v.x > c.offRampX - c.exitPrepDist && v.x < c.offRampX) {
             const urg = 1 - (c.offRampX - v.x) / c.exitPrepDist;
             bias += (L < v.lane ? 1 : -1) * (1 + 4 * urg);
-            if (L < v.lane) bSafe = 4 + 1.5 * urg;
+            if (L < v.lane) bSafe = HUMAN.bDisc + (HUMAN.bSafe + 1.5 - HUMAN.bDisc) * urg;
           }
         }
-        // MOBIL safety criterion on the current situation (no anticipation)
-        if (fol && !fol.isObstacle && !fol.crashed && !fol.disabled && this._idm(fol, v, true) < -bSafe) continue;
-        if (lead && this._idm(v, lead, true) < -bSafe) continue;   // must also be able to brake for the new leader
+        // MOBIL safety criterion on the current situation (no anticipation), at the headway each driver
+        // would accept right after the change; plus a kinematic check that includes the reaction time
+        bSafe *= this._humanGrip();
+        const moving = fol && !fol.isObstacle && !fol.crashed && !fol.disabled && !fol.stalled;
+        if (moving) {
+          // judge the follower's situation as it will be once that driver has reacted
+          const gReact = gFol - Math.max(0, fol.v - v.v) * fol.hReact;
+          if (gReact < 2 || !this._kinOk(fol, v, gFol, fol.hReact, bSafe)) continue;
+          const vSelf = { x: fol.x + gReact + v.length, length: v.length, v: v.v, a: v.a };
+          if (this._idm(fol, vSelf, true, this._relaxedT(fol, gReact)) < -bSafe) continue;
+        }
+        if (lead && (this._idm(v, lead, true, this._relaxedT(v, gLead)) < -bSafe || !this._kinOk(v, lead, gLead, 0.3, bSafe))) continue;
         // incentive is bounded so that mandatory changes (exit, ramp) are limited by safety only
-        const score = clamp(this._idm(v, lead) - aCur, -2, 2) + bias;
-        if (score > bestScore) { bestScore = score; best = L; }
+        const score = clamp(this._idm(v, lead, false, lead ? this._relaxedT(v, gLead) : undefined) - aCur, -2, 2) + bias;
+        if (score > bestScore) { bestScore = score; best = L; bestLead = lead; bestFol = fol; }
       }
-      if (best !== null) { this._startLaneChange(v, best); return; }
+      if (best !== null) { this._humanStartLaneChange(v, best, bestLead, bestFol); return; }
       // signal: a following driver in the target lane may let us in (politeness 50 %)
       if (wanted && wanted.fol && !wanted.fol.isObstacle && !wanted.fol.yieldTo && v.v > 3 && v.x - wanted.fol.x < 60 && this.rng() < 0.5) {
         wanted.fol.yieldTo = v; wanted.fol.yieldUntil = this.t + 5;
@@ -1027,6 +1174,7 @@
           const a = list[i], b = list[i + 1];
           if (a === b) continue;
           if (a.isObstacle && b.isObstacle) continue;
+          if ((b.isWall && a.laneTo !== null) || (a.isWall && b.laneTo !== null)) continue;   // already moving out of the acceleration lane
           if (a.x > b.x - b.length) {
             // a's front is inside b: a hit b from behind (or merged into it)
             const hitter = a.isObstacle ? b : a;
@@ -1058,7 +1206,7 @@
           if (v.lane === 0 && v.laneTo === null) { done = true; this._complete(v, c.offRampX); }
           else { v.exits = false; this.m.missedExits++; }
         }
-        if (!done) keep.push(v);
+        if (!done) keep.push(v); else v.gone = true;
       }
       this.vehicles = keep;
       this.obstacles = this.obstacles.filter(o => this.t < o.clearAt);
@@ -1197,9 +1345,10 @@
         vLimit: this.vLimit,
         rampForced: m.rampReleasesForced,
         occupancy: this.occupancy, occupancyBudget: this.occupancyBudget,
+        lossEst: this.lossEst, staleExtra: this.staleExtra,
       };
     }
   }
 
-  return { World, DEFAULTS, TYPES, sdrCapacity, sdrOptimalSpeed, humanCapacity, mulberry32 };
+  return { World, DEFAULTS, TYPES, HUMAN, sdrCapacity, sdrOptimalSpeed, humanCapacity, mulberry32 };
 });

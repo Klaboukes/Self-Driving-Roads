@@ -2,11 +2,13 @@
  * Headless experiments for the SDR simulator.
  *   node experiments.js                 -> runs everything, writes results/results.md and results/results.json
  *   node experiments.js --quick         -> fewer seeds, shorter runs (smoke test)
- *   node experiments.js --only=a,b      -> only these groups (see GROUPS)
- * Groups run in parallel worker threads.
+ *   node experiments.js --only=a,b      -> only these groups (see GROUPS); the others are kept from the last run
+ *
+ * Every group is a list of independent simulation runs (tasks) plus a function that turns their
+ * results into table rows. All tasks of all groups share one pool of worker threads.
  */
 'use strict';
-const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
+const { Worker, isMainThread, parentPort } = require('worker_threads');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -15,7 +17,10 @@ const { World } = SDR;
 
 const QUICK = process.argv.includes('--quick');
 const ONLY = (process.argv.find(a => a.startsWith('--only=')) || '').slice(7).split(',').filter(Boolean);
-const SEEDS6 = QUICK ? [1, 2] : [1, 2, 3, 4, 5, 6];
+const range = n => Array.from({ length: n }, (_, i) => i + 1);
+const SEEDS_FLOW = range(QUICK ? 2 : 5);      // throughput runs
+const SEEDS_INC = range(QUICK ? 2 : 10);      // incident runs
+const WARM = 300, MEAS = QUICK ? 300 : 900;   // throughput runs: warm-up and measuring time (s)
 
 const SYSTEMS = {
   'Today (human drivers)':          { mode: 'human' },
@@ -30,11 +35,16 @@ const POLICIES = {
   'SDR hybrid':   { mode: 'sdr', separation: 'hybrid' },
 };
 
-// ------------------------------------------------------------------ single run helpers
-function runFlow(cfg, warmup, measure) {
+// ------------------------------------------------------------------ single runs (executed in workers)
+// throughput run. `pre` may switch road sensors off in one segment before the run starts.
+function runFlow(cfg, warmup, measure, pre) {
   const w = new World(cfg);
+  if (pre && pre.sensorsDown >= 0) w.toggleSensors(pre.sensorsDown);
   w.run(warmup);
-  const id0 = w.nextId, done0 = w.m.completed, hard0 = w.m.hardBrakes, dist0 = w.m.vehDist, brake0 = w.m.brakeEnergy, col0 = w.m.collisions;
+  const m = w.m;
+  const id0 = w.nextId, done0 = m.completed, hard0 = m.hardBrakes, dist0 = m.vehDist, brake0 = m.brakeEnergy, col0 = m.collisions;
+  const sup0 = m.supervision, safe0 = m.safeStops, miss0 = m.missedExits;
+  m.minSpare = Infinity;
   let speedSum = 0, speedN = 0;
   const n = Math.round(measure / 30);
   for (let i = 0; i < n; i++) {
@@ -44,8 +54,9 @@ function runFlow(cfg, warmup, measure) {
   }
   const s = w.stats(measure);
   const arrived = w.nextId - id0;
-  const served = w.m.completed - done0;
-  const km = (w.m.vehDist - dist0) / 1000;
+  const served = m.completed - done0;
+  const km = (m.vehDist - dist0) / 1000;
+  const exiting = arrived * (w.cfg.exitShare || 0);
   return {
     flow: s.flow,
     servedPerH: served / measure * 3600,
@@ -54,10 +65,14 @@ function runFlow(cfg, warmup, measure) {
     tripDelay: s.tripDelay,
     queueEnd: s.mainQueue + s.rampQueue,
     maxWait: s.maxQueueWait,
-    collisions: w.m.collisions - col0,
-    hardPer1000km: km > 0 ? 1000 * (w.m.hardBrakes - hard0) / km : 0,
-    brakeWhPerKm: km > 0 ? ((w.m.brakeEnergy - brake0) * 1500 / 3600) / km : 0,
-    missedExits: s.missedExits,
+    collisions: m.collisions - col0,
+    hardPer1000km: km > 0 ? 1000 * (m.hardBrakes - hard0) / km : 0,
+    brakeWhPerKm: km > 0 ? ((m.brakeEnergy - brake0) * 1500 / 3600) / km : 0,
+    missedPct: exiting > 0 ? 100 * (m.missedExits - miss0) / exiting : 0,
+    supervision: m.supervision - sup0,
+    safeStops: m.safeStops - safe0,
+    minSpare: m.minSpare,
+    allowance: s.staleExtra,
     vLimitKmh: s.vLimit * 3.6,
   };
 }
@@ -122,8 +137,9 @@ function applyIncident(w, kind, cfg) {
   throw new Error('unknown incident ' + kind);
 }
 
+const INC_DEFAULTS = { warmup: 600, observe: 300 };
 function runIncident(cfg, kind, seed, opts) {
-  const o = Object.assign({ warmup: 600, observe: 300 }, opts || {});
+  const o = Object.assign({}, INC_DEFAULTS, opts || {});
   const w = new World(Object.assign({}, cfg, { seed }));
   w.run(o.warmup);
   const m0 = Object.assign({}, w.m);
@@ -148,77 +164,140 @@ function runIncident(cfg, kind, seed, opts) {
   };
 }
 
+// the same traffic (same seed, same period) without the incident: what would have happened anyway
+function runBaseline(cfg, seed, opts) {
+  const o = Object.assign({}, INC_DEFAULTS, opts || {});
+  const w = new World(Object.assign({}, cfg, { seed }));
+  w.run(o.warmup);
+  const col0 = w.m.collisions, hard0 = w.m.hardBrakes, t0 = w.t;
+  w.run(o.observe);
+  return { collisions: w.m.collisions - col0, hardBrakes: w.m.hardBrakes - hard0, vehS: vehicleSeconds(w, t0) };
+}
+
+const TASKS = { flow: runFlow, incident: runIncident, baseline: runBaseline };
+
+// ------------------------------------------------------------------ statistics
+const num = x => typeof x === 'number' && isFinite(x);
+function mean(a) { const v = a.filter(num); return v.length ? v.reduce((p, q) => p + q, 0) / v.length : NaN; }
+function sd(a) {
+  const v = a.filter(num); if (v.length < 2) return NaN;
+  const mu = mean(v); return Math.sqrt(v.reduce((p, q) => p + (q - mu) * (q - mu), 0) / (v.length - 1));
+}
+// mean of every numeric field, plus <field>Sd = standard deviation between runs
+function avg(list) {
+  const out = { runs: list.length };
+  for (const k of Object.keys(list[0])) {
+    out[k] = mean(list.map(r => r[k]));
+    out[k + 'Sd'] = sd(list.map(r => r[k]));
+  }
+  out.minSpare = Math.min(...list.map(r => num(r.minSpare) ? r.minSpare : Infinity));
+  out.collisionsTotal = list.reduce((a, r) => a + (r.collisions || 0), 0);
+  return out;
+}
+
 function summarise(res) {
   const sum = k => res.reduce((a, r) => a + (r[k] || 0), 0);
+  const paired = res.filter(r => r.base);
   return {
     runs: res.length,
     runsWithCollision: res.filter(r => r.collisions > 0).length,
     collisions: sum('collisions'),
+    // collisions in the same traffic without the incident (only where a paired run was made)
+    bgCollisions: paired.length ? paired.reduce((a, r) => a + r.base.collisions, 0) : undefined,
     objectHits: sum('objectHits'),
     maxImpactKmh: res.length ? Math.max(...res.map(r => r.maxImpactKmh)) : 0,
     guardian: sum('guardian'), safeStops: sum('safeStops'), supervision: sum('supervision'),
     hardBrakes: sum('hardBrakes') / res.length,
+    bgHardBrakes: paired.length ? paired.reduce((a, r) => a + r.base.hardBrakes, 0) / paired.length : undefined,
     sidetracked: sum('sidetracked') / res.length,
     liveLaneStopS: sum('liveLaneStopS') / res.length,
     clearance: mean(res.map(r => r.clearance)),
     gap: mean(res.map(r => r.gap)),
+    extraVehH: paired.length ? mean(paired.map(r => (r.vehS - r.base.vehS) / 3600)) : undefined,
+    extraVehHSd: paired.length ? sd(paired.map(r => (r.vehS - r.base.vehS) / 3600)) : undefined,
   };
 }
-function mean(a) { const v = a.filter(x => typeof x === 'number' && isFinite(x)); return v.length ? v.reduce((p, q) => p + q, 0) / v.length : NaN; }
+
+// ------------------------------------------------------------------ task planning
+// A plan collects the runs a group needs. `add` returns a handle; identical baseline runs are shared.
+function makePlan() {
+  const tasks = [], seen = new Map();
+  return {
+    tasks,
+    add(kind, ...args) { tasks.push({ kind, args }); return tasks.length - 1; },
+    unique(kind, ...args) {
+      const key = kind + JSON.stringify(args);
+      if (!seen.has(key)) seen.set(key, this.add(kind, ...args));
+      return seen.get(key);
+    },
+  };
+}
+// one table row of incident runs: every seed, optionally paired with the same traffic without the incident
+function incidentRuns(p, cfg, kind, opts, paired) {
+  return SEEDS_INC.map(seed => ({
+    inc: p.add('incident', cfg, kind, seed, opts),
+    base: paired ? p.unique('baseline', cfg, seed, opts) : -1,
+  }));
+}
+function incidentSummary(r, runs) {
+  const res = [];
+  for (const { inc, base } of runs) {
+    if (!r[inc].applicable) continue;
+    res.push(base >= 0 ? Object.assign({ base: r[base] }, r[inc]) : r[inc]);
+  }
+  return res.length ? summarise(res) : { runs: 0 };
+}
+const flowRuns = (p, cfg, pre) => SEEDS_FLOW.map(seed => p.add('flow', Object.assign({ seed }, cfg), WARM, MEAS, pre));
+const flowAvg = (r, runs) => avg(runs.map(i => r[i]));
 
 // ------------------------------------------------------------------ experiment groups
-function groupDemand() {
-  const seeds = QUICK ? [1] : [1, 2];
-  const demands = QUICK ? [3000, 6000] : [2400, 3600, 4800, 6000];
+// Each group: (plan) -> function(results) -> rows
+const DEMANDS = QUICK ? [3600, 6000] : [2400, 3600, 4800, 6000, 7200];
+function groupDemand(p) {
   const rows = [];
-  for (const [name, sys] of Object.entries(SYSTEMS)) for (const dm of demands) {
-    const acc = [];
-    for (const seed of seeds) acc.push(runFlow(Object.assign({ seed, demandMain: dm, demandRamp: 900 }, sys), 300, QUICK ? 300 : 900));
-    rows.push({ system: name, demandMain: dm, demandRamp: 900, ...avg(acc) });
-  }
-  return rows;
+  for (const [name, sys] of Object.entries(SYSTEMS)) for (const dm of DEMANDS)
+    rows.push({ system: name, demandMain: dm, demandRamp: 900, runs: flowRuns(p, Object.assign({ demandMain: dm, demandRamp: 900 }, sys)) });
+  return r => rows.map(({ runs, ...m }) => ({ ...m, ...flowAvg(r, runs) }));
 }
 
-function groupIncidents() {
+const INC_DEMAND = { demandMain: 4200, demandRamp: 600 };
+function groupIncidents(p) {
   const kinds = ['debris', 'brick-wall stop', 'vehicle comms loss', 'segment controller failure (60 s)', 'sudden 50 % brake loss'];
   const rows = [];
   for (const kind of kinds) for (const [name, sys] of Object.entries(SYSTEMS)) {
     if (name.includes('adaptive')) continue;
-    const res = SEEDS6.map(seed => runIncident(Object.assign({ demandMain: 4200, demandRamp: 600 }, sys), kind, seed)).filter(r => r.applicable);
-    rows.push(res.length ? { incident: kind, system: name, ...summarise(res) } : { incident: kind, system: name, runs: 0 });
+    rows.push({ incident: kind, system: name, runs: incidentRuns(p, Object.assign({}, INC_DEMAND, sys), kind, undefined, true) });
   }
-  return rows;
+  return r => rows.map(({ runs, ...m }) => ({ ...m, ...incidentSummary(r, runs) }));
 }
 
-function groupWeather() {
-  const seeds = QUICK ? [1] : [1, 2];
+function groupWeather(p) {
   const rows = [];
-  for (const [label, friction] of [['dry', 1.0], ['wet', 0.7], ['ice', 0.3]]) {
-    for (const [name, sys] of Object.entries(SYSTEMS)) {
-      const acc = seeds.map(seed => runFlow(Object.assign({ seed, friction, demandMain: 3600, demandRamp: 600 }, sys), 300, QUICK ? 300 : 900));
-      rows.push({ weather: label, system: name, ...avg(acc) });
-    }
-  }
-  return rows;
+  for (const [label, friction] of [['dry', 1.0], ['wet', 0.7], ['ice', 0.3]])
+    for (const [name, sys] of Object.entries(SYSTEMS))
+      rows.push({ weather: label, system: name, runs: flowRuns(p, Object.assign({ friction, demandMain: 3600, demandRamp: 600 }, sys)) });
+  return r => rows.map(({ runs, ...m }) => ({ ...m, ...flowAvg(r, runs) }));
 }
 
 function groupTheory() {
-  const rows = [];
-  for (const [label, friction] of [['dry', 1.0], ['wet', 0.7], ['ice', 0.3]]) {
-    const cfg = Object.assign({}, SDR.DEFAULTS, { friction });
-    const r = { weather: label };
-    for (const kmh of [40, 60, 80, 100, 120]) {
-      r[`abs@${kmh}`] = SDR.sdrCapacity(cfg, 'absolute', kmh / 3.6);
-      r[`hyb@${kmh}`] = SDR.sdrCapacity(cfg, 'hybrid', kmh / 3.6);
-      r[`rel@${kmh}`] = SDR.sdrCapacity(cfg, 'relative', kmh / 3.6);
-      r[`hum@${kmh}`] = SDR.humanCapacity(cfg, kmh / 3.6);
+  return () => {
+    const rows = [];
+    for (const [label, friction] of [['dry', 1.0], ['wet', 0.7], ['ice', 0.3]]) {
+      const cfg = Object.assign({}, SDR.DEFAULTS, { friction });
+      const r = { weather: label };
+      for (const kmh of [40, 60, 80, 100, 120]) {
+        r[`abs@${kmh}`] = SDR.sdrCapacity(cfg, 'absolute', kmh / 3.6);
+        r[`hyb@${kmh}`] = SDR.sdrCapacity(cfg, 'hybrid', kmh / 3.6);
+        r[`rel@${kmh}`] = SDR.sdrCapacity(cfg, 'relative', kmh / 3.6);
+        r[`hum@${kmh}`] = SDR.humanCapacity(cfg, kmh / 3.6);
+      }
+      r.absOpt = SDR.sdrOptimalSpeed(cfg, 'absolute') * 3.6;
+      r.hybOpt = SDR.sdrOptimalSpeed(cfg, 'hybrid') * 3.6;
+      r.relOpt = SDR.sdrOptimalSpeed(cfg, 'relative') * 3.6;
+      rows.push(r);
     }
-    r.absOpt = SDR.sdrOptimalSpeed(cfg, 'absolute') * 3.6;
-    r.hybOpt = SDR.sdrOptimalSpeed(cfg, 'hybrid') * 3.6;
-    r.relOpt = SDR.sdrOptimalSpeed(cfg, 'relative') * 3.6;
-    rows.push(r);
-  }
-  return rows;
+    return rows;
+  };
 }
 
 // hybrid variants: what each rule costs in capacity and what it buys at a brick-wall stop / lost load
@@ -233,17 +312,24 @@ const HYBRID_VARIANTS = {
   '+ absolute behind trucks + platoon break every 10':   { separation: 'hybrid', platoonBreakEvery: 10, hybridTruckAbsolute: true },
   'Absolute':                                            { separation: 'absolute' },
 };
-function groupHybrid() {
+const SHORT = { warmup: 400, observe: 240 };
+const SAT = { demandMain: 7200, demandRamp: 900 };     // more than any system can carry
+function groupHybrid(p) {
   const rows = [];
-  const seeds = QUICK ? [1] : [1, 2];
   for (const [name, v] of Object.entries(HYBRID_VARIANTS)) {
     const sys = Object.assign({ mode: 'sdr' }, v);
-    const flow = avg(seeds.map(seed => runFlow(Object.assign({ seed, demandMain: 6000, demandRamp: 900 }, sys), 300, QUICK ? 300 : 900)));
-    const brick = summarise(SEEDS6.map(seed => runIncident(Object.assign({ demandMain: 4200, demandRamp: 600 }, sys), 'brick-wall stop', seed, { warmup: 400, observe: 240 })).filter(r => r.applicable));
-    const load = summarise(SEEDS6.map(seed => runIncident(Object.assign({ demandMain: 4200, demandRamp: 600 }, sys), 'load falls off a truck', seed, { warmup: 400, observe: 240 })).filter(r => r.applicable));
-    rows.push({ variant: name, servedPerH: flow.servedPerH, speedKmh: flow.speedKmh, tripDelay: flow.tripDelay, queueEnd: flow.queueEnd, brick, load });
+    rows.push({
+      variant: name,
+      flow: flowRuns(p, Object.assign({}, SAT, sys)),
+      brick: incidentRuns(p, Object.assign({}, INC_DEMAND, sys), 'brick-wall stop', SHORT, false),
+      load: incidentRuns(p, Object.assign({}, INC_DEMAND, sys), 'load falls off a truck', SHORT, false),
+    });
   }
-  return rows;
+  return r => rows.map(row => {
+    const f = flowAvg(r, row.flow);
+    return { variant: row.variant, servedPerH: f.servedPerH, servedPerHSd: f.servedPerHSd, speedKmh: f.speedKmh, tripDelay: f.tripDelay, queueEnd: f.queueEnd,
+      brick: incidentSummary(r, row.brick), load: incidentSummary(r, row.load) };
+  });
 }
 
 // detection layers vs foreign objects
@@ -255,15 +341,12 @@ const LAYERS = {
   'Road cameras + car sensors + V2V':        { roadDetectProb: 0.95, carDetectProb: 0.9, carSensorShare: 'v2v' },
 };
 function groupObjects(kind) {
-  return () => {
+  return p => {
     const rows = [];
-    const human = SEEDS6.map(seed => runIncident({ mode: 'human', demandMain: 4200, demandRamp: 600 }, kind, seed, { warmup: 400, observe: 240 })).filter(r => r.applicable);
-    rows.push({ scenario: kind, layers: 'Human drivers (see it within 150 m)', policy: 'Today', ...summarise(human) });
-    for (const [lname, layers] of Object.entries(LAYERS)) for (const [pname, pol] of Object.entries(POLICIES)) {
-      const res = SEEDS6.map(seed => runIncident(Object.assign({ demandMain: 4200, demandRamp: 600 }, pol, layers), kind, seed, { warmup: 400, observe: 240 })).filter(r => r.applicable);
-      rows.push({ scenario: kind, layers: lname, policy: pname, ...summarise(res) });
-    }
-    return rows;
+    rows.push({ scenario: kind, layers: 'Human drivers (see it within 150 m)', policy: 'Today', runs: incidentRuns(p, Object.assign({ mode: 'human' }, INC_DEMAND), kind, SHORT, true) });
+    for (const [lname, layers] of Object.entries(LAYERS)) for (const [pname, pol] of Object.entries(POLICIES))
+      rows.push({ scenario: kind, layers: lname, policy: pname, runs: incidentRuns(p, Object.assign({}, INC_DEMAND, pol, layers), kind, SHORT, false) });
+    return r => rows.map(({ runs, ...m }) => ({ ...m, ...incidentSummary(r, runs) }));
   };
 }
 
@@ -275,54 +358,51 @@ const SAFETY_SYSTEMS = {
   'SDR hybrid, with safety lane':  { mode: 'sdr', separation: 'hybrid', safetyLane: true },
 };
 function groupSafety(kind) {
-  return () => {
+  return p => {
     const rows = [];
     const opts = { warmup: 400, observe: QUICK ? 600 : 1200 };
     for (const [name, sys] of Object.entries(SAFETY_SYSTEMS)) {
       if (sys.mode === 'human' && kind !== 'breakdown') continue;
-      const cfg = Object.assign({ demandMain: 4200, demandRamp: 600 }, sys);
-      const res = [], extra = [];
-      for (const seed of SEEDS6) {
-        const r = runIncident(cfg, kind, seed, opts);
-        if (!r.applicable) continue;
-        const base = new World(Object.assign({}, cfg, { seed }));
-        base.run(opts.warmup); const t0 = base.t; base.run(opts.observe);
-        extra.push((r.vehS - vehicleSeconds(base, t0)) / 3600);
-        res.push(r);
-      }
-      rows.push({ incident: kind, system: name, ...summarise(res), extraVehH: mean(extra) });
+      rows.push({ incident: kind, system: name, runs: incidentRuns(p, Object.assign({}, INC_DEMAND, sys), kind, opts, true) });
     }
-    return rows;
+    return r => rows.map(({ runs, ...m }) => ({ ...m, ...incidentSummary(r, runs) }));
   };
 }
 
 // road sensors down in one segment: hybrid falls back to absolute there
-function groupSensors() {
+function groupSensors(p) {
   const rows = [];
-  const seeds = QUICK ? [1] : [1, 2];
-  for (const [dm, dr] of [[4200, 600], [6000, 900]]) {
-    for (const [label, seg] of [['all sensors up', -1], ['down at the on-ramp merge (2–3 km)', 2], ['down on a plain stretch (4–5 km)', 4]]) {
-      const acc = seeds.map(seed => {
-        const w = new World({ mode: 'sdr', separation: 'hybrid', demandMain: dm, demandRamp: dr, seed });
-        if (seg >= 0) w.toggleSensors(seg);
-        w.run(300);
-        const done0 = w.m.completed; w.run(QUICK ? 300 : 900);
-        const s = w.stats(QUICK ? 300 : 900);
-        return { servedPerH: (w.m.completed - done0) / (QUICK ? 300 : 900) * 3600, tripDelay: s.tripDelay, queueEnd: s.mainQueue + s.rampQueue, collisions: s.collisions };
-      });
-      rows.push({ demand: `${dm} + ${dr}`, state: label, ...avg(acc) });
-    }
-  }
-  return rows;
+  for (const [dm, dr] of [[4200, 600], [7200, 900]])
+    for (const [label, seg] of [['all sensors up', -1], ['down at the on-ramp merge (2–3 km)', 2], ['down on a plain stretch (4–5 km)', 4]])
+      rows.push({ demand: `${dm} + ${dr}`, state: label, runs: flowRuns(p, { mode: 'sdr', separation: 'hybrid', demandMain: dm, demandRamp: dr }, { sensorsDown: seg }) });
+  return r => rows.map(({ runs, ...m }) => ({ ...m, ...flowAvg(r, runs) }));
 }
 
-function avg(list) {
-  const out = {};
-  for (const k of Object.keys(list[0])) {
-    const vals = list.map(r => r[k]).filter(v => typeof v === 'number' && isFinite(v));
-    out[k] = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : NaN;
-  }
-  return out;
+// radio packet loss: fixed gaps vs gaps the road widens to the loss it measures
+function groupLoss(p) {
+  const rows = [];
+  for (const adaptive of [false, true]) for (const loss of QUICK ? [0, 0.2] : [0, 0.01, 0.05, 0.1, 0.2, 0.5])
+    rows.push({ packetLoss: loss, adaptive, runs: flowRuns(p, Object.assign({ mode: 'sdr', separation: 'hybrid', packetLoss: loss, lossAdaptive: adaptive }, SAT)) });
+  return r => rows.map(({ runs, ...m }) => ({ ...m, ...flowAvg(r, runs) }));
+}
+
+// truck share: the hybrid rule (absolute gap behind trucks) costs more the more trucks there are
+function groupTrucks(p) {
+  const rows = [];
+  const systems = { 'Today (human drivers)': SYSTEMS['Today (human drivers)'], 'SDR, relative separation': SYSTEMS['SDR, relative separation'], 'SDR, hybrid separation': SYSTEMS['SDR, hybrid separation'] };
+  for (const share of QUICK ? [0, 0.3] : [0, 0.1, 0.2, 0.3]) for (const [name, sys] of Object.entries(systems))
+    rows.push({ truckShare: share, system: name, runs: flowRuns(p, Object.assign({ truckShare: share }, SAT, sys)) });
+  return r => rows.map(({ runs, ...m }) => ({ ...m, ...flowAvg(r, runs) }));
+}
+
+// today's road on its own: does the human baseline behave like a real motorway?
+function groupToday(p) {
+  const rows = [];
+  for (const dm of QUICK ? [6000] : [3000, 4500, 6000, 7200])
+    rows.push({ road: 'Plain road (no ramp, no exit)', demand: `${dm}`, total: dm, runs: flowRuns(p, { mode: 'human', demandMain: dm, demandRamp: 0, exitShare: 0 }) });
+  for (const dm of QUICK ? [3600] : [2400, 3600, 4800, 6000])
+    rows.push({ road: 'With on-ramp and exit', demand: `${dm} + 900`, total: dm + 900, runs: flowRuns(p, { mode: 'human', demandMain: dm, demandRamp: 900 }) });
+  return r => rows.map(({ runs, ...m }) => ({ ...m, ...flowAvg(r, runs) }));
 }
 
 const GROUPS = {
@@ -335,78 +415,96 @@ const GROUPS = {
   'safety-brakes': groupSafety('sudden 50 % brake loss'),
   'safety-comms': groupSafety('vehicle comms loss'),
   sensors: groupSensors,
+  'packet-loss': groupLoss,
+  trucks: groupTrucks,
+  today: groupToday,
 };
 
 // ------------------------------------------------------------------ report
-const f0 = v => (v === undefined || !isFinite(v)) ? '–' : Math.round(v).toLocaleString('en-US');
-const f1 = v => (v === undefined || !isFinite(v)) ? '–' : v.toFixed(1);
+const f0 = v => num(v) ? Math.round(v).toLocaleString('en-US') : '–';
+const f1 = v => num(v) ? v.toFixed(1) : '–';
+const f2 = v => num(v) ? v.toFixed(2) : '–';
+const pm = (v, s) => num(s) ? `${f0(v)} ± ${f0(s)}` : f0(v);          // mean ± standard deviation between runs
+const pm1 = (v, s) => num(s) ? `${f1(v)} ± ${f1(s)}` : f1(v);
+const bg = r => r.bgCollisions === undefined ? '' : ` (${r.bgCollisions})`;
 
-function report(res, seconds) {
+function report(res) {
+  const meta = res._meta || {};
   const L = [];
-  L.push('# SDR simulator — experiment results', '');
-  L.push(`Generated ${new Date().toISOString().slice(0, 16).replace('T', ' ')} · ${QUICK ? 'QUICK run' : 'full run'} · ${seconds.toFixed(0)} s compute`, '');
+  const head = name => {       // one line saying how the section's data was produced
+    const m = meta[name];
+    return m ? `*${m.quick ? 'Quick run' : 'Full run'} of ${m.date}: ${m.flowSeeds} runs per throughput row, ${m.incidentSeeds} per incident row.*` : '';
+  };
+  L.push('# SDR simulator: experiment results', '');
   L.push('Corridor: 5 km, 3 lanes, on-ramp merging at 2.0–2.3 km, off-ramp at 3.5 km (20 % of vehicles exit), 10 % trucks.');
   L.push('"Today" is the same corridor with 100 % human drivers; every SDR row is 100 % SDR-guided vehicles.');
-  L.push('Hybrid separation (recommended, the default) = relative, plus an absolute gap behind trucks, behind any vehicle that reports a fault, and in/just before a segment whose road sensors are down. Platoon breaks are off (section 3 shows why).', '');
+  L.push('Hybrid separation (recommended, and the simulator default) = relative, plus an absolute gap behind trucks, behind any vehicle that reports a fault, and in/just before a segment whose road sensors are down. Platoon breaks are off (section 3 shows why).');
+  L.push('"±" is the standard deviation between runs with different traffic (seeds). Differences smaller than that are noise.', '');
 
   if (res.demand) {
-    L.push('## 1. Throughput and delay vs demand', '');
-    L.push('Ramp demand 900 veh/h in all runs. Warm-up 5 min, measured over 15 min.', '');
-    L.push('| System | Main demand (veh/h) | Served (veh/h) | Served % | Mean speed (km/h) | Trip delay (s) | Queue at gates (end) | Max gate wait (s) | Collisions | Hard brakes / 1000 veh-km | Braking loss (Wh/veh-km) |');
+    L.push('## 1. Throughput and delay vs demand', '', head('demand'), '');
+    L.push('Ramp demand 900 veh/h in all runs. Warm-up 5 min, then measured (15 min in a full run, 5 min in a quick run).', '');
+    L.push('| System | Main demand (veh/h) | Served (veh/h) | Served % | Mean speed (km/h) | Trip delay (s) | Queue at gates (end) | Max gate wait (s) | Collisions (all runs) | Hard brakes / 1000 veh-km | Braking loss (Wh/veh-km) |');
     L.push('|---|---|---|---|---|---|---|---|---|---|---|');
-    for (const r of res.demand) L.push(`| ${r.system} | ${f0(r.demandMain)} | ${f0(r.servedPerH)} | ${f0(r.servedPct)} | ${f0(r.speedKmh)} | ${f0(r.tripDelay)} | ${f0(r.queueEnd)} | ${f0(r.maxWait)} | ${f1(r.collisions)} | ${f0(r.hardPer1000km)} | ${f1(r.brakeWhPerKm)} |`);
+    for (const r of res.demand) L.push(`| ${r.system} | ${f0(r.demandMain)} | ${pm(r.servedPerH, r.servedPerHSd)} | ${f0(r.servedPct)} | ${f0(r.speedKmh)} | ${pm(r.tripDelay, r.tripDelaySd)} | ${f0(r.queueEnd)} | ${f0(r.maxWait)} | ${r.collisionsTotal} | ${f0(r.hardPer1000km)} | ${f1(r.brakeWhPerKm)} |`);
     L.push('', 'Trip delay = time from arriving at the entry (including waiting at a gate) to leaving the corridor, minus free-flow time.', '');
   }
   if (res.incidents) {
-    L.push('## 2. Incidents', '');
-    L.push('Main demand 4,200 veh/h + ramp 600 veh/h. Incident at t = 10 min around x = 3 km, observed for 5 min. "Brick-wall stop": a vehicle hits something no sensor saw and stops within about a second. "Sudden 50 % brake loss": the brakes of one vehicle halve; SDR health monitoring reports it after 0.5 s (sooner once it brakes); a human driver is not told.', '');
-    L.push('| Incident | System | Runs | Runs with a collision | Collisions | Worst impact (km/h) | Guardian activations | Safe stops | Supervision brakes | Hard brakes per run |');
+    L.push('## 2. Incidents', '', head('incidents'), '');
+    L.push('Main demand 4,200 veh/h + ramp 600 veh/h. Incident at t = 10 min around x = 3 km, observed for 5 min. "Brick-wall stop": a vehicle hits something no sensor saw and stops within about a second. "Sudden 50 % brake loss": the brakes of one vehicle halve; SDR health monitoring reports it after 0.5 s (sooner once it brakes); a human driver is not told. Numbers in brackets: the same traffic over the same 5 minutes without the incident.', '');
+    L.push('| Incident | System | Runs | Runs with a collision | Collisions (without incident) | Worst impact (km/h) | Guardian activations | Safe stops | Supervision brakes | Hard brakes per run (without incident) |');
     L.push('|---|---|---|---|---|---|---|---|---|---|');
     for (const r of res.incidents) {
       if (!r.runs) { L.push(`| ${r.incident} | ${r.system} | n/a | | | | | | | |`); continue; }
-      L.push(`| ${r.incident} | ${r.system} | ${r.runs} | ${r.runsWithCollision} | ${r.collisions} | ${f0(r.maxImpactKmh)} | ${r.guardian} | ${r.safeStops} | ${r.supervision} | ${f0(r.hardBrakes)} |`);
+      L.push(`| ${r.incident} | ${r.system} | ${r.runs} | ${r.runsWithCollision} | ${r.collisions}${bg(r)} | ${f0(r.maxImpactKmh)} | ${r.guardian} | ${r.safeStops} | ${r.supervision} | ${f0(r.hardBrakes)} (${f0(r.bgHardBrakes)}) |`);
     }
     L.push('');
   }
   if (res.hybrid) {
-    L.push('## 3. Hybrid separation variants', '');
-    L.push('Capacity: main 6,000 + ramp 900 veh/h (more than any variant can carry), 2 runs. Safety: 6 runs each at 4,200 + 600 veh/h; "load falls off a truck" drops an object just behind a truck that has a vehicle within 150 m behind it.', '');
+    L.push('## 3. Hybrid separation variants', '', head('hybrid'), '');
+    L.push('Capacity: main 7,200 + ramp 900 veh/h (more than any variant can carry). Safety: runs at 4,200 + 600 veh/h; "load falls off a truck" drops an object just behind a truck that has a vehicle within 150 m behind it.', '');
     L.push('| Variant | Served (veh/h) | Mean speed (km/h) | Trip delay (s) | Brick-wall stop: runs with collision / collisions / worst (km/h) | Lost load: runs with collision / collisions / worst (km/h) | Lost load: mean gap of the follower (m) |');
     L.push('|---|---|---|---|---|---|---|');
-    for (const r of res.hybrid) L.push(`| ${r.variant} | ${f0(r.servedPerH)} | ${f0(r.speedKmh)} | ${f0(r.tripDelay)} | ${r.brick.runsWithCollision} of ${r.brick.runs} / ${r.brick.collisions} / ${f0(r.brick.maxImpactKmh)} | ${r.load.runsWithCollision} of ${r.load.runs} / ${r.load.collisions} / ${f0(r.load.maxImpactKmh)} | ${f0(r.load.gap)} |`);
+    for (const r of res.hybrid) L.push(`| ${r.variant} | ${pm(r.servedPerH, r.servedPerHSd)} | ${f0(r.speedKmh)} | ${f0(r.tripDelay)} | ${r.brick.runsWithCollision} of ${r.brick.runs} / ${r.brick.collisions} / ${f0(r.brick.maxImpactKmh)} | ${r.load.runsWithCollision} of ${r.load.runs} / ${r.load.collisions} / ${f0(r.load.maxImpactKmh)} | ${f0(r.load.gap)} |`);
     L.push('');
   }
   const objKeys = ['objects-150', 'objects-300', 'objects-truck'].filter(k => res[k]);
   if (objKeys.length) {
-    L.push('## 4. Detection layers vs foreign objects', '');
-    L.push('An object that stops a vehicle dead (worst case) appears in lane 2 at 4,200 + 600 veh/h; 6 runs per row, observed for 4 minutes. Road cameras confirm an object after 0.5 s; each vehicle\'s own sensor sees it within 120 m with the stated probability (rolled per vehicle); "shared" means the detecting vehicle reports it to the road (confirmed one control cycle later) and with V2V also directly to nearby vehicles.', '');
+    L.push('## 4. Detection layers vs foreign objects', '', head(objKeys[0]), '');
+    L.push('An object that stops a vehicle dead (worst case) appears in lane 2 at 4,200 + 600 veh/h, observed for 4 minutes. Road cameras confirm an object after 0.5 s; each vehicle\'s own sensor sees it within 120 m with the stated probability (rolled per vehicle); "shared" means the detecting vehicle reports it to the road (confirmed one control cycle later) and with V2V also directly to nearby vehicles.', '');
     L.push('| Scenario | Detection layers | Policy | Runs with a collision | Collisions | Vehicles that hit the object | Worst impact (km/h) | Mean distance of first vehicle (m) |');
     L.push('|---|---|---|---|---|---|---|---|');
-    for (const k of objKeys) for (const r of res[k]) L.push(`| ${r.scenario} | ${r.layers} | ${r.policy} | ${r.runsWithCollision} of ${r.runs} | ${r.collisions} | ${r.objectHits} | ${f0(r.maxImpactKmh)} | ${f0(r.gap)} |`);
-    L.push('');
+    for (const k of objKeys) for (const r of res[k]) {
+      if (!r.runs) { L.push(`| ${r.scenario} | ${r.layers} | ${r.policy} | n/a | | | | |`); continue; }
+      L.push(`| ${r.scenario} | ${r.layers} | ${r.policy} | ${r.runsWithCollision} of ${r.runs} | ${r.collisions}${bg(r)} | ${r.objectHits} | ${f0(r.maxImpactKmh)} | ${f0(r.gap)} |`);
+    }
+    L.push('', 'Numbers in brackets (human rows): collisions in the same traffic without the object.', '');
   }
   const safKeys = ['safety-breakdown', 'safety-brakes', 'safety-comms'].filter(k => res[k]);
   if (safKeys.length) {
-    L.push('## 5. Safety lane (hard shoulder)', '');
-    L.push('4,200 + 600 veh/h, 6 runs per row, observed for 20 minutes. A broken-down vehicle loses propulsion and is towed 15 minutes after it stops. Extra delay = vehicle-hours spent in the system in those 20 minutes minus the same traffic without the incident.', '');
-    L.push('| Incident | System | Runs | Collisions | Worst impact (km/h) | Sent to safety lane (per run) | Vehicle stopped in a live lane (s per run) | Extra delay (vehicle-hours) |');
+    L.push('## 5. Safety lane (hard shoulder)', '', head(safKeys[0]), '');
+    L.push('4,200 + 600 veh/h, observed for 20 minutes (10 in a quick run). A broken-down vehicle loses propulsion and is towed 15 minutes after it stops. Extra delay = vehicle-hours spent in the system in that time minus the same traffic without the incident. Collisions in brackets: the same traffic without the incident.', '');
+    L.push('| Incident | System | Runs | Collisions (without incident) | Worst impact (km/h) | Sent to safety lane (per run) | Vehicle stopped in a live lane (s per run) | Extra delay (vehicle-hours) |');
     L.push('|---|---|---|---|---|---|---|---|');
-    for (const k of safKeys) for (const r of res[k]) L.push(`| ${r.incident} | ${r.system} | ${r.runs} | ${r.collisions} | ${f0(r.maxImpactKmh)} | ${f1(r.sidetracked)} | ${f0(r.liveLaneStopS)} | ${f1(r.extraVehH)} |`);
+    for (const k of safKeys) for (const r of res[k]) {
+      if (!r.runs) { L.push(`| ${r.incident} | ${r.system} | n/a | | | | | |`); continue; }
+      L.push(`| ${r.incident} | ${r.system} | ${r.runs} | ${r.collisions}${bg(r)} | ${f0(r.maxImpactKmh)} | ${f1(r.sidetracked)} | ${f0(r.liveLaneStopS)} | ${pm1(r.extraVehH, r.extraVehHSd)} |`);
+    }
     L.push('');
   }
   if (res.sensors) {
-    L.push('## 6. Road-sensor outage (hybrid falls back to absolute locally)', '');
-    L.push('| Demand (veh/h) | Road sensors | Served (veh/h) | Trip delay (s) | Queue at gates (end) | Collisions |');
+    L.push('## 6. Road-sensor outage (hybrid falls back to absolute locally)', '', head('sensors'), '');
+    L.push('| Demand (veh/h) | Road sensors | Served (veh/h) | Trip delay (s) | Queue at gates (end) | Collisions (all runs) |');
     L.push('|---|---|---|---|---|---|');
-    for (const r of res.sensors) L.push(`| ${r.demand} | ${r.state} | ${f0(r.servedPerH)} | ${f0(r.tripDelay)} | ${f0(r.queueEnd)} | ${f1(r.collisions)} |`);
+    for (const r of res.sensors) L.push(`| ${r.demand} | ${r.state} | ${pm(r.servedPerH, r.servedPerHSd)} | ${f0(r.tripDelay)} | ${f0(r.queueEnd)} | ${r.collisionsTotal} |`);
     L.push('');
   }
   if (res.weather) {
-    L.push('## 7. Weather', '');
+    L.push('## 7. Weather', '', head('weather'), '');
     L.push('Main demand 3,600 veh/h + ramp 600 veh/h.', '');
-    L.push('| Weather | System | Served (veh/h) | Mean speed (km/h) | Trip delay (s) | Queue at gates (end) | Collisions | Hard brakes / 1000 veh-km |');
+    L.push('| Weather | System | Served (veh/h) | Mean speed (km/h) | Trip delay (s) | Queue at gates (end) | Collisions (all runs) | Hard brakes / 1000 veh-km |');
     L.push('|---|---|---|---|---|---|---|---|');
-    for (const r of res.weather) L.push(`| ${r.weather} | ${r.system} | ${f0(r.servedPerH)} | ${f0(r.speedKmh)} | ${f0(r.tripDelay)} | ${f0(r.queueEnd)} | ${f1(r.collisions)} | ${f0(r.hardPer1000km)} |`);
+    for (const r of res.weather) L.push(`| ${r.weather} | ${r.system} | ${pm(r.servedPerH, r.servedPerHSd)} | ${f0(r.speedKmh)} | ${f0(r.tripDelay)} | ${f0(r.queueEnd)} | ${r.collisionsTotal} | ${f0(r.hardPer1000km)} |`);
     L.push('');
   }
   if (res.theory) {
@@ -418,45 +516,97 @@ function report(res, seconds) {
       L.push(`| ${r.weather} | SDR absolute | ${[40, 60, 80, 100, 120].map(k => f0(r[`abs@${k}`])).join(' | ')} | ${f0(r.absOpt)} km/h |`);
       L.push(`| ${r.weather} | SDR hybrid (absolute behind the 10 % trucks) | ${[40, 60, 80, 100, 120].map(k => f0(r[`hyb@${k}`])).join(' | ')} | ${f0(r.hybOpt)} km/h |`);
       L.push(`| ${r.weather} | SDR relative | ${[40, 60, 80, 100, 120].map(k => f0(r[`rel@${k}`])).join(' | ')} | ${f0(r.relOpt)} km/h |`);
-      L.push(`| ${r.weather} | Human (1.4 s headway) | ${[40, 60, 80, 100, 120].map(k => f0(r[`hum@${k}`])).join(' | ')} | – |`);
+      L.push(`| ${r.weather} | Human (${SDR.HUMAN.T} s headway) | ${[40, 60, 80, 100, 120].map(k => f0(r[`hum@${k}`])).join(' | ')} | – |`);
     }
+    L.push('');
+  }
+  if (res['packet-loss']) {
+    L.push('## 9. Radio packet loss', '', head('packet-loss'), '');
+    L.push('SDR hybrid at 7,200 + 900 veh/h (saturated). "Fixed gaps": every vehicle keeps the standard allowance for stale authority (about two control cycles). "Widened gaps": the road measures the loss rate and adds the allowance shown, so a run of lost messages rarely outlasts it. A supervision brake is full-force braking because the last authority received is about to run out. Smallest spare = the least distance, over all vehicles and runs, between where a vehicle could still stop and the end of its authority (negative would mean an overrun).', '');
+    L.push('| Packet loss | Gaps | Extra allowance (s) | Served (veh/h) | Supervision brakes per run | Safe stops per run | Hard brakes / 1000 veh-km | Collisions (all runs) | Smallest spare (m) |');
+    L.push('|---|---|---|---|---|---|---|---|---|');
+    for (const r of res['packet-loss']) L.push(`| ${f0(r.packetLoss * 100)} % | ${r.adaptive ? 'widened' : 'fixed'} | ${f2(r.allowance)} | ${pm(r.servedPerH, r.servedPerHSd)} | ${f0(r.supervision)} | ${f0(r.safeStops)} | ${f0(r.hardPer1000km)} | ${r.collisionsTotal} | ${f2(r.minSpare)} |`);
+    L.push('');
+  }
+  if (res.trucks) {
+    L.push('## 10. Truck share', '', head('trucks'), '');
+    L.push('Main 7,200 + ramp 900 veh/h (saturated). The hybrid keeps an absolute gap behind every truck, so its cost grows with the truck share.', '');
+    L.push('| Trucks | System | Served (veh/h) | Mean speed (km/h) | Trip delay (s) | Collisions (all runs) |');
+    L.push('|---|---|---|---|---|---|');
+    for (const r of res.trucks) L.push(`| ${f0(r.truckShare * 100)} % | ${r.system} | ${pm(r.servedPerH, r.servedPerHSd)} | ${f0(r.speedKmh)} | ${f0(r.tripDelay)} | ${r.collisionsTotal} |`);
+    L.push('');
+  }
+  if (res.today) {
+    L.push('## 11. Today\'s road on its own (calibration check)', '', head('today'), '');
+    L.push('Does the human baseline behave like a real motorway? Reference values: the Highway Capacity Manual gives 2,400 passenger cars per hour per lane under ideal conditions, and queue discharge after a breakdown of about 2,000–2,300; with 10 % trucks that is roughly 6,500 veh/h (capacity) and 5,450–6,300 veh/h (discharge) for three lanes.', '');
+    L.push('| Road | Demand (veh/h) | Served (veh/h) | Served % | Mean speed (km/h) | Hard brakes / 1000 veh-km | Missed exits (%) | Collisions (all runs) |');
+    L.push('|---|---|---|---|---|---|---|---|');
+    for (const r of res.today) L.push(`| ${r.road} | ${r.demand} | ${pm(r.servedPerH, r.servedPerHSd)} | ${f0(r.servedPct)} | ${f0(r.speedKmh)} | ${f0(r.hardPer1000km)} | ${f1(r.missedPct)} | ${r.collisionsTotal} |`);
     L.push('');
   }
   return L.join('\n');
 }
 
 // ------------------------------------------------------------------ main / worker
-if (isMainThread) {
+if (!isMainThread) {
+  parentPort.on('message', ({ id, kind, args }) => parentPort.postMessage({ id, result: TASKS[kind](...args) }));
+} else if (require.main === module) {
   const t0 = Date.now();
+  const unknown = ONLY.filter(n => !GROUPS[n]);
+  if (unknown.length) { console.error(`Unknown group(s): ${unknown.join(', ')}. Available: ${Object.keys(GROUPS).join(', ')}`); process.exit(1); }
   const names = Object.keys(GROUPS).filter(n => !ONLY.length || ONLY.includes(n));
   const dir = path.join(__dirname, 'results');
   fs.mkdirSync(dir, { recursive: true });
   // keep results of groups not re-run
-  let prev = {};
-  try { if (ONLY.length) prev = JSON.parse(fs.readFileSync(path.join(dir, 'results.json'), 'utf8')); } catch (e) { prev = {}; }
-  const limit = Math.max(1, os.cpus().length - 1);
-  const queue = names.slice();
-  const res = Object.assign({}, prev);
-  let running = 0;
-  const done = new Promise((resolve, reject) => {
-    const next = () => {
-      if (!queue.length && !running) return resolve();
-      while (running < limit && queue.length) {
-        const name = queue.shift(); running++;
-        const w = new Worker(__filename, { workerData: { name }, argv: process.argv.slice(2) });
-        const t1 = Date.now();
-        w.on('message', r => { res[name] = r; running--; console.error(`  ${name} done in ${((Date.now() - t1) / 1000).toFixed(0)} s`); next(); });
-        w.on('error', reject);
-      }
-    };
-    next();
-  });
-  done.then(() => {
-    const secs = (Date.now() - t0) / 1000;
-    fs.writeFileSync(path.join(dir, 'results.json'), JSON.stringify(res, null, 1));
-    fs.writeFileSync(path.join(dir, 'results.md'), report(res, secs));
-    console.log(report(res, secs));
-  }).catch(e => { console.error(e); process.exit(1); });
-} else {
-  parentPort.postMessage(GROUPS[workerData.name]());
+  let res = {};
+  try { if (ONLY.length) res = JSON.parse(fs.readFileSync(path.join(dir, 'results.json'), 'utf8')); } catch (e) { res = {}; }
+  res._meta = res._meta || {};
+
+  const plans = names.map(name => { const p = makePlan(); return { name, p, build: GROUPS[name](p), out: [] }; });
+  const queue = [];
+  plans.forEach((g, gi) => g.p.tasks.forEach((t, ti) => queue.push({ gi, ti, kind: t.kind, args: t.args })));
+  // long runs first, so the pool stays busy to the end
+  const cost = q => q.kind === 'flow' ? q.args[1] + q.args[2] : (Object.assign({}, INC_DEFAULTS, q.args[q.kind === 'incident' ? 3 : 2])).warmup + (Object.assign({}, INC_DEFAULTS, q.args[q.kind === 'incident' ? 3 : 2])).observe;
+  queue.sort((a, b) => cost(b) - cost(a));
+  const total = queue.length;
+  console.error(`${names.length} group(s), ${total} simulation runs, ${Math.min(total, Math.max(1, os.cpus().length - 1))} worker threads${QUICK ? ' (quick)' : ''}`);
+
+  const finish = () => {
+    const date = new Date().toISOString().slice(0, 16).replace('T', ' ');
+    for (const g of plans) {
+      res[g.name] = g.build(g.out);
+      res._meta[g.name] = { date, quick: QUICK, flowSeeds: SEEDS_FLOW.length, incidentSeeds: SEEDS_INC.length };
+    }
+    fs.writeFileSync(path.join(dir, 'results.json'), JSON.stringify(res, null, 1));   // data first: a report bug must not lose a long run
+    const text = report(res);
+    fs.writeFileSync(path.join(dir, 'results.md'), text);
+    console.log(text);
+    console.error(`done in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+  };
+  if (!total) finish();
+  else {
+    let next = 0, done = 0, failed = false;
+    const workers = [];
+    const stop = () => { for (const w of workers) w.terminate(); };
+    for (let k = 0; k < Math.min(total, Math.max(1, os.cpus().length - 1)); k++) {
+      const w = new Worker(__filename, { argv: process.argv.slice(2) });
+      workers.push(w);
+      let current = null;
+      const feed = () => {
+        if (next >= total) return;
+        current = queue[next++];
+        w.postMessage({ id: 0, kind: current.kind, args: current.args });
+      };
+      w.on('message', ({ result }) => {
+        plans[current.gi].out[current.ti] = result;
+        done++;
+        if (done % Math.max(1, Math.floor(total / 20)) === 0) console.error(`  ${done}/${total} runs, ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+        if (done === total) { stop(); finish(); } else feed();
+      });
+      w.on('error', e => { if (failed) return; failed = true; console.error(e); stop(); process.exit(1); });
+      feed();
+    }
+  }
 }
+
+module.exports = { runFlow, runIncident, runBaseline, GROUPS, report };

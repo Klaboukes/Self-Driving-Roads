@@ -2,6 +2,7 @@
 
 Status: first results, for discussion · 2026-11-18
 **Correction (2026-11-19):** the brake-loss results for relative separation below were caused by a flaw in the simulator's relative-separation formula. Behind a brake-degraded vehicle, the follower was allowed to close up to a negative gap. With the fix (a follower never assumes its leader stops more gently than it can itself), brake loss causes 0 collisions under every SDR policy. Follow-up results, including hybrid separation, are in [SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md). The raw results file now holds the newer run.
+**Superseded figures (2026-11-19, review):** the human driver model behind the "Today's road" columns in this document was too weak. It carried about 4,300 veh/h, slowed to 85 km/h in light traffic and braked hard far too often; a real three-lane motorway carries roughly 5,450–6,500 veh/h. The model was rebuilt and now carries about 5,400. Every comparison with today's road below is therefore too favourable to SDR: "relative carries ~45 % more" is now +26 %, and the hybrid that followed carries +9 %. The SDR columns changed little. This document is kept as the record of the first run; current figures are in [SDR-04](SDR-04-Viability-Assessment.md) and the raw results.
 Simulator: [simulator/](simulator/README.md) · Raw results: [simulator/results/results.md](simulator/results/results.md)
 
 ---

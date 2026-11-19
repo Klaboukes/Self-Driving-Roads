@@ -40,7 +40,7 @@
   // ------------------------------------------------------------------ state
   const state = {
     running: true, speed: 5, focus: 3000, compare: true, seed: 1,
-    weather: 1.0, separation: 'absolute', speedPolicy: 'fixed', carSensorShare: 'road',
+    weather: 1.0, separation: 'hybrid', speedPolicy: 'fixed', carSensorShare: 'road',
   };
   let worlds = {}, ts = {}, acc = 0, prev = {};
   let tsDirty = true;
@@ -267,7 +267,7 @@
     ctx.setLineDash([]);
     // off-ramp marker
     if (cfg.offRampX > x0 && cfg.offRampX < x0 + win) {
-      ctx.fillStyle = C.ink_2 || C['ink-2']; ctx.textBaseline = 'bottom';
+      ctx.fillStyle = C['ink-2']; ctx.textBaseline = 'bottom';
       ctx.fillText('exit ↘', X(cfg.offRampX), H - 1);
       ctx.fillStyle = C.axis; ctx.fillRect(Math.round(X(cfg.offRampX)), top + nL * laneH, 1, 6);
     }
@@ -299,7 +299,7 @@
     if (key === 'sdr') {
       for (const v of w.vehicles) {
         if (!inView(v) || !v.plan || v.crashed || v.disabled) continue;
-        const e = v.mode === 'safestop' ? v.plan.eoa : v.plan.eoa;
+        const e = v.plan.eoa;
         const xa = X(v.x), xb = X(Math.min(e, x0 + win + 50));
         if (xb <= xa) continue;
         const y = yOf(v), hh = laneH * 0.24;
@@ -342,7 +342,7 @@
     const X = x => PAD + x / cfg.length * (W - 2 * PAD);
     ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'bottom'; ctx.textAlign = 'center';
     ctx.fillStyle = C.muted;
-    for (const [x, label] of [[cfg.mergeStart, 'on-ramp'], [cfg.offRampX, 'exit'], [0, '0 km'], [cfg.length, '5 km']]) {
+    for (const [x, label] of [[cfg.mergeStart, 'on-ramp'], [cfg.offRampX, 'exit'], [0, '0 km'], [cfg.length, `${cfg.length / 1000} km`]]) {
       ctx.textAlign = x === 0 ? 'left' : x === cfg.length ? 'right' : 'center';
       ctx.fillText(label, X(x), H);
       if (x > 0 && x < cfg.length) { ctx.globalAlpha = 0.5; ctx.fillRect(Math.round(X(x)), 0, 1, H - 12); ctx.globalAlpha = 1; }
@@ -384,7 +384,8 @@
     }
     const sw = worlds.sdr;
     const lim = Math.round(sw.vLimit * 3.6);
-    $('sdrPolicyLabel').textContent = `· ${state.separation} separation · ${state.speedPolicy} speed · driving ${lim} km/h`;
+    const allow = sw.staleExtra > 0.005 ? ` · gaps widened ${sw.staleExtra.toFixed(2)} s for radio loss` : '';
+    $('sdrPolicyLabel').textContent = `· ${state.separation} separation · ${state.speedPolicy} speed · driving ${lim} km/h${allow}`;
     const t = Math.floor(sw.t);
     $('clock').textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
     $('incSegment').innerHTML = (sw.segments[sw._segmentIndex(state.focus)].failed ? 'Restore segment' : 'Fail segment') + ` S${sw._segmentIndex(state.focus) + 1} <span class="tag">SDR</span>`;

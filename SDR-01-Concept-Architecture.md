@@ -117,7 +117,8 @@ The envelope size depends on:
     - behind any vehicle that reports a fault;
     - in and just before segments whose road sensing is degraded.
 
-    In simulation, absolute separation alone carried 38 % *less* than today's road at motorway speed, which fails priority 2. The hybrid carried +36 % and removed every lost-load collision ([SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md)).
+    In simulation, absolute separation alone carried about half of today's road at motorway speed, which fails priority 2. The hybrid carried about 9 % more than today's road at 10 % trucks and removed every lost-load collision ([SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md), [SDR-04](SDR-04-Viability-Assessment.md)). The absolute gap behind trucks is what the hybrid pays for that: from about 20 % trucks its capacity gain is gone.
+  - **Rule found in simulation:** size the gaps to the radio link as measured. If authority messages are lost, the road widens every vehicle's allowance for stale authority, so that lost messages cost capacity (7 % at 5 % loss) and never full-force braking.
   - **Rule found in simulation:** under relative separation a follower must never assume its leader stops more gently than the follower itself can. Otherwise a weak-braking leader licenses a tailgate.
   - **What no spacing rule can fix:** a vehicle that stops dead because it hit something nobody saw. At relative-level capacity, safety against that comes from **fast detection** (D9) and **load monitoring** (D10), which make such events rare.
 
@@ -138,7 +139,7 @@ The envelope size depends on:
 
 **Important property:** in human traffic, stopping in your lane is dangerous because the people behind you might not stop. In an SDR, **every vehicle upstream is also controlled**, so a coordinated stop in the lane is a *safe state*. This makes fail-safe design much simpler than it is for an SDC.
 
-**But a safe state is not a free state.** A vehicle stopped in a live lane closes that lane until it is removed. A 15-minute breakdown cost 6.9 vehicle-hours of delay in simulation. With a **safety lane** (the hard shoulder), the road moves the faulty vehicle off while it still rolls, and the cost dropped to zero ([SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md)).
+**But a safe state is not a free state.** A vehicle stopped in a live lane closes that lane until it is removed. A 15-minute breakdown cost about 6 vehicle-hours of delay in simulation. With a **safety lane** (the hard shoulder), the road moves the faulty vehicle off while it still rolls, and the cost dropped to zero ([SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md)).
 
 ---
 
@@ -153,7 +154,7 @@ The envelope size depends on:
    - hybrid ~2,700;
    - relative ~3,150.
 
-   On the simulated 3-lane corridor with an on-ramp, the hybrid served 5,920 veh/h against today's best of 4,364 (+36 %), with no breakdown. Against a real road (which likely carries more than the simulated human baseline) I expect roughly +10–30 % ([SDR-04](SDR-04-Viability-Assessment.md)).
+   On the simulated 3-lane corridor with an on-ramp and 10 % trucks, the hybrid served 5,880 veh/h at 102 km/h against today's best of 5,400 at about 60 km/h (+9 %); pure relative separation served 6,810 (+26 %). With no trucks the hybrid gains 28 %; from about 20 % trucks it gains nothing. The larger gain is in flow quality: no breakdown, and about half the delay once demand exceeds today's capacity ([SDR-04](SDR-04-Viability-Assessment.md)). An earlier figure of +36 % was measured against a human baseline that was too weak.
 6. **Emergency vehicles.** A corridor is cleared ahead of them by re-planning, not by sirens.
 
 ---
@@ -223,7 +224,7 @@ These are the problems the design must solve, not reasons to stop.
 
 | # | Decision | Options | Initial lean |
 |---|---|---|---|
-| D1 | Separation policy | Absolute / relative / hybrid | ~~Absolute first~~ → **hybrid**: relative by default, absolute behind load-carrying vehicles, behind vehicles that report a fault, and where road sensing is degraded. No platoon breaks. +36 % on today's road, no lost-load collisions (see [SDR-02](SDR-02-Simulation-Findings.md), [SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md)) |
+| D1 | Separation policy | Absolute / relative / hybrid | ~~Absolute first~~ → **hybrid**: relative by default, absolute behind load-carrying vehicles, behind vehicles that report a fault, and where road sensing is degraded. No platoon breaks. About +9 % on today's road at 10 % trucks, no lost-load collisions (see [SDR-02](SDR-02-Simulation-Findings.md), [SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md)) |
 | D2 | Positioning reference | GNSS-only / road markers / road observation | All three, with road observation authoritative |
 | D3 | Segment length | 500 m / 1–2 km / 5 km | ~1–2 km (to validate by simulation) |
 | D4 | Planning horizon | 3 s / 10 s / 30 s | ~10 s detailed plan + 1–3 s authority |

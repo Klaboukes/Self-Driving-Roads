@@ -1,0 +1,14 @@
+{
+  "name": "self-driving-road",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Self Driving Road (SDR): concept documents and a traffic simulator that compares a road-guided motorway with today's road.",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test simulator/test",
+    "experiments": "node simulator/experiments.js",
+    "experiments:quick": "node simulator/experiments.js --quick",
+    "risk": "node simulator/risk-model.js",
+    "serve": "python -m http.server 8765 --directory simulator"
+  }
+}

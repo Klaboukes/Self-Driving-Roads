@@ -4,6 +4,61 @@ What was built, what went wrong and how it was fixed. Many fixes are design less
 
 ---
 
+## 2026-11-19 (review pass): radio loss, calibrated human baseline, statistics, tests (→ [SDR-04](../SDR-04-Viability-Assessment.md))
+
+A review of the whole project. It changed the headline: against a human baseline that behaves like a real motorway, SDR's gain is in speed, smoothness and reliability, and only partly in vehicles per hour. All numbers in the documents were re-run.
+
+### Fixed: SDR
+- **Supervision brake fired one step late.** The check compared the authority with a stopping point that ignored commands already on their way through the actuator. A vehicle could end up needing up to one time step of travel (about 1.7 m at 120 km/h) more than it had, eating into the 2.5 m margin.
+  - Fix: the check counts the commands in the pipeline and brakes one step earlier (`_stopCommitted`).
+  - Result: with 0–20 % radio loss the smallest spare distance never goes below zero.
+- **`minSpare` reported phantom overruns.** While a vehicle was already braking, the metric assumed a fresh actuator delay every step and showed −7 to −9 m under radio loss. The true worst case was −1.7 to −1.9 m. It now reports the true spare distance.
+- **Radio loss caused full-force braking.** After four or five lost messages in a row a closely following vehicle ran out of authority and braked at 8 m/s²: hundreds of times in 10 minutes at 20 % loss. The buffer allowed for about two control cycles of staleness, whatever the radio was doing.
+  - Fix: the road measures the loss rate from the acknowledgements and widens every vehicle's stale-authority allowance until a run of lost messages that outlasts it is rare (`lossAdaptive`, `lossTolerance`). Admission control and the ramp gate use the wider gap too.
+  - **Lesson:** size the gaps to the radio link you measure, not the one you specified. Radio loss should cost capacity, never braking.
+- **Defaults contradicted decision D1.** The engine and the browser started in absolute separation while the documents recommend hybrid. Hybrid is now the default in both.
+
+### Fixed: today's road (the human baseline)
+The baseline carried about 4,300 veh/h, slowed to 85 km/h at light traffic, braked hard about 700 times per 1,000 vehicle-km and bumped at the merge about twice an hour. Real three-lane motorways carry roughly 5,450–6,500 veh/h. Six causes, all in the model, none in the "drivers":
+
+- **Plain IDM keeps far larger gaps than its headway near the desired speed** (about 30 % larger at 100 km/h), so a lane carried about 1,700 veh/h where the capacity chart promised 2,200.
+  - Fix: IDM+ (Schakel, Knoop & van Arem 2012). The simulation now matches the theory curve.
+- **The corridor entry was the bottleneck.** Vehicles entered at 80 % of their headway and as slow as half the lane speed, which sent a braking wave back into the inflow; entry speeds sank to about 60 km/h. And the waiting traffic was one single file, so a truck waiting for the right lane held up cars for the other two.
+  - Fix: enter at the speed of the lane with the driver's own headway; waiting traffic is as wide as the road (both worlds).
+- **Trucks spread over two lanes,** holding both at 86 km/h. Human truck drivers now enter in the right lane.
+- **A merging vehicle kept braking for the end of the acceleration lane** while it was already moving into the right lane, in front of traffic doing 100 km/h. That caused the "bumps at the end of the acceleration lane". Fixed in both worlds.
+- **Lane changes could force the new follower to brake at 4–8 m/s²,** and plain IDM answers a short gap with emergency braking even when nothing is closing.
+  - Fix: headway relaxation after lane changes (Laval & Leclercq 2008), the constant-acceleration heuristic for cut-ins (Kesting, Treiber & Helbing 2010), and gap acceptance judged after the follower's reaction time (1.5 m/s² for optional changes).
+- **Drivers at a merge didn't cooperate.** Merging drivers now line up with a gap while on the acceleration lane, and right-lane drivers move left for on-ramp traffic when they can.
+- Also: the driving noise depended on the time step (now an Ornstein-Uhlenbeck process), and a driver above the desired speed could brake at 9 m/s² (now eases off).
+- **On ice the rebuilt drivers crashed** (19 collisions in 5 runs): they slowed down and kept longer gaps, but still counted on braking the road could not give. All their braking habits now shrink with the grip (`_humanGrip`): 0 collisions in 5 runs.
+
+Result (section 11 of the results, `--only=today`): the plain road carries 5,680 veh/h and the corridor with the on-ramp 5,250–5,400 (was 4,300). At 3,300 veh/h traffic flows at 110 km/h (was 85). Hard braking is 20–86 per 1,000 vehicle-km (was 700–3,200). There were no collisions in 40 runs of normal traffic (was about one every other run). Halving the time step no longer changes the result beyond the spread between runs.
+
+### Added
+- **Experiments** ([experiments.js](experiments.js)):
+  - all runs share one pool of worker threads (1,525 runs in a full run);
+  - 5 runs per throughput row (was 2) with the standard deviation shown, 10 per incident row (was 6);
+  - incident rows are paired with the same traffic without the incident, so background events are not counted as caused by it;
+  - demand sweep up to 7,200 + 900 veh/h, so every system is pushed past its capacity;
+  - new groups `packet-loss`, `trucks` and `today`;
+  - each report section says which run it came from, and the data file is written before the report.
+- **Regression tests** ([test/engine.test.js](test/engine.test.js), `node --test simulator/test`): reproducibility, identical traffic in both worlds, no SDR collisions or authority overruns (also with radio loss), a free-flowing baseline, fail-safe incident responses.
+- **Risk model** reads the collisions per brick-wall event from the latest results instead of a hand-copied number.
+- `package.json` with `test`, `experiments`, `risk` and `serve` scripts; the project is now a git repository.
+- **UI:** hybrid is the starting policy; the SDR header shows how much the gaps were widened for radio loss.
+
+### Findings that changed conclusions
+- **The capacity gain is smaller.** With 10 % trucks the hybrid carries 5,880 veh/h against today's 5,400: +9 %, not +36 %. Relative separation carries 6,810 (+26 %).
+- **The gain depends on trucks.** Hybrid against today's road: +28 % with no trucks, +9 % at 10 %, −2 % at 20 %, −11 % at 30 %. The absolute gap behind trucks costs 14 % at 10 % trucks, not 7 %: the earlier runs stopped at a demand that relative separation could still carry, so they never showed its limit.
+- **Flow quality is the robust gain.** Above today's capacity SDR keeps about 100 km/h where today's road drops to about 60, and trip delay is roughly halved. Below today's capacity the two roads perform alike.
+- **Radio loss has a price.** With widened gaps the hybrid carries 7 % less at 5 % loss, 13 % less at 10 % and 21 % less at 20 %. With fixed gaps it keeps its capacity but brakes at full force 200 times per 15 minutes at 10 % loss and 2,300 times at 20 %.
+- **A brick-wall stop is worse on today's road than first shown:** 33 collisions in 10 runs, against 8–9 for SDR relative and hybrid. The old baseline was crawling at 45 km/h when the incident happened, which hid this.
+- **Platoon breaks are still rejected.** With 10 runs per variant they show no reduction in brick-wall collisions at all.
+- **Breakdown without a safety lane:** SDR lost about 6 vehicle-hours and today's road about 15, but the spread between runs is as large as the figures, so the earlier "4 times better" is not supported.
+
+---
+
 ## 2026-11-19: Hybrid separation, detection layers, safety lane (→ [SDR-03](../SDR-03-Hybrid-Detection-Safety-Lane.md))
 
 ### Added
@@ -111,5 +166,6 @@ What was built, what went wrong and how it was fixed. Many fixes are design less
 - No false alarms, weather or lighting effects, or correlated misses in object detection.
 - Every object hit stops the vehicle dead (worst case).
 - One corridor only: no network, intersections or urban traffic.
-- Human baseline is not calibrated to loop-detector data; its capacity (~4,300 veh/h) is probably pessimistic.
+- Human baseline is checked against handbook capacities, not fitted to loop-detector data from a real road. It sits at the low end of the handbook range.
+- A lane change is granted on the follower's current state; with heavy radio loss the follower may still be driving on an older authority for a moment (the simulator does not wait for its acknowledgement).
 - Human drivers always reach the hard shoulder if they can; in reality 20 % of breakdowns end in a live lane.

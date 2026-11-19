@@ -50,9 +50,9 @@
       <h2>SDR policy</h2>
       <div class="field-label">Separation <span class="hint">(decision D1)</span></div>
       <div class="seg" role="radiogroup" data-name="separation">
-        <button data-value="absolute" class="on" title="Assume the vehicle ahead could stop instantly">Absolute</button>
+        <button data-value="absolute" title="Assume the vehicle ahead could stop instantly">Absolute</button>
         <button data-value="relative" title="Assume the vehicle ahead brakes at most at its certified maximum">Relative</button>
-        <button data-value="hybrid" title="Relative, plus an absolute gap behind trucks, behind faulty vehicles and where road sensors are down">Hybrid</button>
+        <button data-value="hybrid" class="on" title="Recommended: relative, plus an absolute gap behind trucks, behind faulty vehicles and where road sensors are down">Hybrid</button>
       </div>
       <div class="field-label">Speed policy</div>
       <div class="seg" role="radiogroup" data-name="speedPolicy">
@@ -63,6 +63,7 @@
         <input type="range" id="speedLimit" min="60" max="130" step="5" value="120"></label>
       <label class="slider">Radio packet loss <output id="packetLossOut"></output>
         <input type="range" id="packetLoss" min="0" max="50" step="1" value="0"></label>
+      <p class="hint">The road measures the loss and widens every gap to match, so lost messages cost capacity instead of causing hard braking.</p>
     </section>
 
     <section>

@@ -23,7 +23,7 @@ The idea is a road system that drives the vehicles, instead of autonomous self-d
 | [SDR-02 First Simulation Findings](SDR-02-Simulation-Findings.md) | Absolute vs relative separation, incidents, weather, energy. *Contains a correction about brake loss (see SDR-03).* |
 | [SDR-03 Hybrid separation, detection layers and the safety lane](SDR-03-Hybrid-Detection-Safety-Lane.md) | Hybrid separation tests; fences, roadside cameras, car sensors and V2V; the safety lane; a foreign-object risk model; full research data and sources |
 | [SDR-04 Viability Assessment](SDR-04-Viability-Assessment.md) | How viable and efficient SDR is, based on the simulations; confidence levels and what would change the verdict |
-| [simulator/README.md](simulator/README.md) | How to run the simulator, how the model works, parameters, limitations |
+| [simulator/README.md](simulator/README.md) | How to run the simulator and its tests, how the model works, parameters, limitations |
 | [simulator/CHANGELOG.md](simulator/CHANGELOG.md) | Development log: what was built, bugs found, design lessons |
 | [simulator/results/results.md](simulator/results/results.md) | Latest raw experiment results |
 | [simulator/results/risk-model.md](simulator/results/risk-model.md) | Latest risk-model output |
@@ -34,13 +34,18 @@ The idea is a road system that drives the vehicles, instead of autonomous self-d
 
 | | Status |
 |---|---|
-| Separation policy (D1) | **Hybrid:** relative by default, absolute behind trucks/load carriers, behind faulty vehicles and where road sensing is degraded. +36 % throughput on the simulated corridor; no lost-load collisions. Platoon breaks rejected. |
+| Separation policy (D1) | **Hybrid:** relative by default, absolute behind trucks/load carriers, behind faulty vehicles and where road sensing is degraded. No lost-load collisions. Platoon breaks rejected. |
+| Capacity | With 10 % trucks the hybrid carries about 9 % more than today's road (5,880 against 5,400 veh/h), and 28 % more with no trucks. From about 20 % trucks the gain is gone. The earlier "+36 %" was measured against a human baseline that was too weak and is withdrawn. |
+| Flow quality | Above today's capacity the SDR road keeps moving at about 100 km/h where today's road drops to about 60, and trip delay is roughly halved. Below it, both roads perform alike. |
 | Admission control and merging | Gates plus "virtual vehicle" merging remove traffic breakdown entirely: no stop-and-go and almost no hard braking. |
-| Fail-safe design | Radio loss, segment-controller failure, brake loss and seen debris: 0 collisions in every SDR policy. |
+| Fail-safe design | Radio loss, segment-controller failure, brake loss and seen debris: 0 collisions in every SDR policy. No vehicle ran past its authority, also with 20 % of radio messages lost. |
+| Radio loss | The road widens the gaps to the loss it measures. Lost messages then cost capacity (7 % at 5 % loss) instead of causing full-force braking. |
 | Roadside sensing (D9) | Must confirm an object within about 1 s. This is the decisive engineering question. |
 | Load monitoring (D10), safety lane (D11), full fencing (D12) | Proposed; supported by simulation and research. |
 
-**Open:** system-failure risk (software, cyber, common cause), sensor false alarms, cost per km, network-level routing, intersections and urban roads, and the operator model (D8).
+**Open:** the hybrid's cost on truck-heavy roads, system-failure risk (software, cyber, common cause), sensor false alarms, cost per km, network-level routing, intersections and urban roads, and the operator model (D8).
+
+The simulated today's road is checked against handbook capacities (it sits at their low end) but is not fitted to a real motorway. Throughput figures are means of 5 runs; incident figures are 10 runs each.
 
 ## Run the simulator
 
@@ -48,4 +53,12 @@ The idea is a road system that drives the vehicles, instead of autonomous self-d
 python -m http.server 8765 --directory simulator
 ```
 
-Then open http://localhost:8765, or double-click `simulator/index.html`. Headless experiments: `node simulator/experiments.js` (about 12 minutes). Risk model: `node simulator/risk-model.js`.
+Then open http://localhost:8765, or double-click `simulator/index.html`.
+
+| Task | Command |
+|---|---|
+| Regression tests (about a minute) | `node --test simulator/test` |
+| All experiments (about 20 minutes on 14 cores) | `node simulator/experiments.js` |
+| Risk model | `node simulator/risk-model.js` |
+
+The same commands are available as `npm test`, `npm run experiments` and `npm run risk`. Nothing needs installing.
