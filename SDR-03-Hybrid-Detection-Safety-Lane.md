@@ -2,6 +2,7 @@
 
 Status: simulation results and desk research, for discussion · 2026-11-19
 **Figures updated (2026-11-19, review):** all simulation numbers below come from the re-run after the review: 10 runs per incident row and 5 per throughput row (was 6 and 2), and a today's road that now carries what a real motorway carries. The capacity comparison changed most: the hybrid is 9 % above today's road, not 36 %. See [SDR-04](SDR-04-Viability-Assessment.md) and the [changelog](simulator/CHANGELOG.md).
+**Figures updated again (2026-11-19, roadmap section 1):** a fault in the SDR merge was fixed and the whole suite re-run. The hybrid is now 12 % above today's road at 10 % trucks and 9 % below it at 20 %. Collision counts are from 10 runs, or from 30 where a comparison needed them; the text says which differences are within the noise. Cheaper truck rules were tested and are reported in [SDR-04](SDR-04-Viability-Assessment.md) and the [roadmap report](reports/1-questions-from-latest-results.md). New desk research on lost loads is in appendix A5.
 Builds on: [SDR-01](SDR-01-Concept-Architecture.md) (architecture) and the first simulation run of 2026-11-18. That run's report (SDR-02) was retired once its figures were superseded; current throughput and weather figures are in [SDR-04](SDR-04-Viability-Assessment.md).
 Raw results: [simulator/results/results.md](simulator/results/results.md) · Risk model: [simulator/results/risk-model.md](simulator/results/risk-model.md)
 
@@ -14,11 +15,11 @@ Raw results: [simulator/results/results.md](simulator/results/results.md) · Ris
    - behind any vehicle that reports a fault;
    - where road sensors are down.
 
-   It carries **5,880 veh/h**, which is 14 % less than pure relative (6,810) and **9 % more than today's road at its best** (5,400). It removes every lost-load collision we tested (25 → 0 in 10 runs). The truck rule costs more as the truck share rises: from about 20 % trucks the hybrid carries no more than today's road.
-2. **Platoon breaks don't pay off.** We tested an absolute gap for every Nth vehicle. One brick-wall stop involves only one or two followers anyway, so a break every 10 vehicles cost 12 % capacity and prevented nothing measurable.
+   It carries **6,040 veh/h**, which is 15 % less than pure relative (7,090) and **12 % more than today's road at its best** (5,400). It removes every lost-load collision we tested (64 in 30 runs without the truck rule, none with it), as long as the road confirms the load within 0.5 s. The truck rule costs more as the truck share rises: at 20 % trucks the hybrid carries 9 % less than today's road, unless trucks with an enclosed, monitored load are exempt from it.
+2. **Platoon breaks don't pay off.** We tested an absolute gap for every Nth vehicle. One brick-wall stop involves only one or two followers anyway, so a break every 10 vehicles cost 9 % capacity and prevented nothing measurable.
 3. **No spacing rule makes a true brick-wall stop safe at relative-level capacity.** An object that stops a car dead, with nobody seeing it in time, still causes a high-speed crash. The answer is to **make such events rare**, so the safety investment moves from spacing to sensing.
 4. **Detection layers work, but speed matters more than coverage.** Road sensors that confirm an object within 0.5 s prevented every collision with lying objects, under every policy. Car sensors help only if what they see is shared: one car's report protects everyone behind it. Today's incident-detection systems take 10–60 s, which is far too slow. SDR needs roadside sensing that confirms an object within about a second.
-5. **The safety lane turns a breakdown from a lane closure into a non-event.** The road steers the faulty vehicle onto the safety lane while it is still rolling. All 10 broken-down vehicles got there, with no measurable delay to other traffic. Without a safety lane, the vehicle blocked a live lane until it was towed, costing about 6 vehicle-hours on average (today's road without a hard shoulder: about 15; both vary a lot between runs). The UK's experience after removing hard shoulders points the same way.
+5. **The safety lane turns a breakdown from a lane closure into a non-event.** The road steers the faulty vehicle onto the safety lane while it is still rolling. All 30 broken-down vehicles got there, with no measurable delay to other traffic. Without a safety lane, the vehicle blocked a live lane until it was towed, costing about 6 vehicle-hours on average (today's road without a hard shoulder: about 18; single runs vary a lot, but over 30 runs the difference is outside the noise). The UK's experience after removing hard shoulders points the same way.
 6. **The risk model says it can work.** It needs SDR-grade sensing (≤1 s road detection, V2V) plus vehicles that report their own lost loads. Then objects cause fewer than 1 collision per billion vehicle-km, against about 10 debris crashes per billion vehicle-km and about 47 motorway casualties per billion vehicle-km today. **With today's detection technology, relative separation would be *worse* than human drivers for objects on the road.**
 
 **A correction to the first simulation report.** That report gave 8 collisions after a sudden brake loss under relative separation. That was a flaw in my relative-separation formula, not physics. After a vehicle's brakes halved, the vehicle behind it assumed the weaker leader would stop more gently. So it was allowed to close up to a negative gap and bumped into it, which then caused a high-speed knock-on crash. The fix is a rule: a follower never assumes its leader stops more gently than the follower itself can. With it, brake loss causes **0 collisions under every SDR policy**.
@@ -46,29 +47,29 @@ Four control flaws showed up while testing breakdowns, and all four are fixed. T
 
 ## 2. Hybrid separation
 
-At saturated demand (7,200 + 900 veh/h), more than any variant can carry, 5 runs each. Safety: 10 runs each at 4,200 + 600 veh/h.
+At saturated demand (7,200 + 900 veh/h), more than any variant can carry, 5 runs each. Safety: 30 runs each at 4,200 + 600 veh/h.
 
-| Variant | Served (veh/h) | Brick-wall stop: collisions (10 runs) | Lost load: collisions (10 runs) | Follower's gap behind the truck |
+| Variant | Served (veh/h) | Brick-wall stop: collisions (30 runs) | Lost load: collisions (30 runs) | Follower's gap behind the truck |
 |---|---|---|---|---|
-| Today's road (human drivers, for scale) | 5,395 | 33 | 26 | 37 m |
-| Relative | **6,807** | 7 | 25 | 14 m |
-| + platoon break every 20 | 6,448 | 9 | 21 | 19 m |
-| + platoon break every 10 | 5,986 | 15 | 21 | 21 m |
-| + platoon break every 5 | 5,311 | 11 | 20 | 26 m |
-| + platoon break every 3 | 4,717 | 11 | 15 | 29 m |
-| **+ absolute behind trucks (recommended)** | **5,882** | 9 | **0** | 64 m |
-| + absolute behind trucks + platoon break every 10 | 5,227 | 7 | 0 | 61 m |
-| Absolute | 2,696 | 0 | 0 | 57 m |
+| Today's road (human drivers, for scale) | 5,395 | 33 in 10 runs | 119 | 36 m |
+| Relative | **7,094** | 23 | 64 | 27 m |
+| + platoon break every 20 | 6,797 | 16 | 52 | 27 m |
+| + platoon break every 10 | 6,468 | 27 | 55 | 28 m |
+| + platoon break every 5 | 5,856 | 24 | 36 | 41 m |
+| + platoon break every 3 | 5,212 | 21 | 27 | 38 m |
+| **+ absolute behind trucks (recommended)** | **6,038** | 27 | **0** | 66 m |
+| + absolute behind trucks + platoon break every 10 | 5,677 | 24 | 0 | 65 m |
+| Absolute | 3,300 | 0 | 0 | 53 m |
 
-*Served figures vary by about ±100 veh/h between runs. Lost-load rows use the default detection (road sensors and car sensors see everything). Today's road row: served at the same demand; incidents from the object and brick-wall tests.*
+*Served figures vary by ±70 to ±280 veh/h between runs. Lost-load rows use the default detection (road sensors and car sensors see everything). Today's road row: served at the same demand; incidents from the object and brick-wall tests. The brick-wall counts of all SDR variants except absolute are within the noise of each other.*
 
 What this shows:
 
-- **Behind trucks is where the absolute gap earns its keep.** About two-thirds of road-debris crashes involve items that fell off vehicles (AAA Foundation). With a 14 m relative gap the follower can't stop, whatever anyone knows. With the 64 m absolute gap, road sensors confirm the object in time and the follower stops. With 10 % trucks the rule costs 14 % of capacity. With 20–30 % trucks it costs about 20 %, which puts the hybrid level with or below today's road ([SDR-04](SDR-04-Viability-Assessment.md)). Limiting the rule to trucks whose load is not enclosed and monitored (D10) is the obvious next thing to test.
-- **Platoon breaks buy nothing.** After a brick-wall stop, each successive follower hits later and slower, so the chain ends by itself after one or two vehicles. No platoon-break setting reduced the brick-wall collisions in these runs (7 without breaks, 9–15 with). A break every 3 vehicles reduced lost-load collisions from 25 to 15 but cost 31 % of capacity, which is worse than simply keeping larger gaps.
-- **The brick-wall stop itself is untouched by any hybrid rule** (7–15 collisions in 10 runs, impacts up to 70 km/h). A vehicle that stops dead without warning is a physics problem, not a spacing problem, unless you accept absolute separation and 60 % less capacity. Today's road does worse: 33 collisions in 10 runs, with impacts of up to 102 km/h.
+- **Behind trucks is where the absolute gap earns its keep.** About two-thirds of road-debris crashes involve items that fell off vehicles (AAA Foundation). With a relative gap of about 27 m the follower can't stop, whatever anyone knows. With the 66 m absolute gap, road sensors confirm the object in time and the follower stops. With 10 % trucks the rule costs 15 % of capacity. With 20–30 % trucks it costs 20–24 %, which puts the hybrid 9–22 % below today's road ([SDR-04](SDR-04-Viability-Assessment.md)). Limiting the rule to trucks whose load is not enclosed and monitored (D10) has since been tested: with at least half the trucks exempt the hybrid is back above today's road at 20 % trucks, and it is exactly as safe as that monitoring. "In time" is narrow: the gap covers a confirmation time of 0.5 s, not of 1 s ([SDR-04](SDR-04-Viability-Assessment.md), section 1).
+- **Platoon breaks buy nothing against a brick-wall stop.** Each successive follower hits later and slower, so the chain ends by itself after one or two vehicles. No platoon-break setting changed the brick-wall collisions (23 in 30 runs without breaks, 16–27 with; every difference is within the noise). Breaks do reduce lost-load collisions, from 64 to 36 with a break every 5 vehicles and to 27 with a break every 3, but that costs 17 % and 27 % of capacity. The truck rule costs 15 % and leaves none.
+- **The brick-wall stop itself is untouched by any hybrid rule** (16–27 collisions in 30 runs, impacts up to 70 km/h). A vehicle that stops dead without warning is a physics problem, not a spacing problem, unless you accept absolute separation and half the capacity. Today's road does worse: 33 collisions in 10 runs, with impacts of up to 102 km/h.
 - **Behind faulty vehicles:** after the formula fix, a brake-degraded leader is no longer dangerous to its follower. The rule stays as cheap insurance, since a vehicle with one fault is more likely to have a second.
-- **Weather:** in dry and wet conditions the hybrid matches relative (about 4,200 veh/h at 3,600 + 600 demand, which is all the traffic there is). On ice it drops to 3,500, below today's road (4,040 at 59 km/h), because the gaps behind trucks become very long. That is arguably correct: on ice a lost load is far more dangerous.
+- **Weather:** in dry and wet conditions the hybrid matches relative (about 4,200 veh/h at 3,600 + 600 demand, which is all the traffic there is). On ice it drops to 3,580, below today's road (3,960 at 60 km/h), because the gaps behind trucks become very long. That is arguably correct: on ice a lost load is far more dangerous.
 
 ---
 
@@ -86,13 +87,15 @@ What this shows:
 
 ### What the simulation adds
 
-Objects that would stop a car dead, at 4,200 + 600 veh/h, 10 runs per row:
+Objects that would stop a car dead, at 4,200 + 600 veh/h; 30 runs per row for the hybrid, 10 for the other policies:
 
 | Detection | Object lying 150–300 m ahead of the next car | Load falls off a truck (hybrid) | Load falls off a truck (relative) |
 |---|---|---|---|
-| Nobody detects it | 10 of 10 runs with a collision, 120 km/h impacts | 10 of 10, 92 km/h | 10 of 10 |
+| Nobody detects it | 30 of 30 runs with a collision, 120 km/h impacts | 30 of 30, 91 km/h | 10 of 10 |
 | Road sensors only (95 %, 0.5 s) | **0 collisions** (all policies) | **0** | 10 of 10 |
 | Road + car sensors + V2V | **0** | **0** | 10 of 10 |
+
+For scale, today's drivers hit a lying object in 3–4 of 30 runs and a lost load in 28 of 30. With road sensors the hybrid's zero is clearly better than today's road for lost loads; for lying objects it is within the noise, because drivers rarely hit those either. With nobody detecting the object, SDR is clearly worse than drivers, who at least see it.
 
 ### What it means
 
@@ -101,7 +104,7 @@ Objects that would stop a car dead, at 4,200 + 600 veh/h, 10 runs per row:
   - SDR's road sensors do one simple job: compare the lane against what the controller already knows is there. Every vehicle position is known, so anything else in a lane is an anomaly.
   - Coverage can overlap, with sensors every 100–300 m. The UK found it had to tighten its radar spacing from 500 m to 300 m.
 - Runway debris radar shows the sensing physics exists for small objects. Its minute-long scan cycle does not suit a motorway.
-- **A segment with failed sensors must fall back to absolute separation.** At the on-ramp merge this cost 16 % of throughput in the simulation (4,736 → 3,987 veh/h at 4,200 + 600 demand). On a plain stretch it cost nothing at that demand and 9 % at saturated demand. Sensor redundancy matters most at merges.
+- **A segment with failed sensors must fall back to absolute separation.** At the on-ramp merge this cost 17 % of throughput in the simulation (4,800 → 3,990 veh/h at 4,200 + 600 demand) and 35 % at saturated demand. On a plain stretch it cost 1 % at that demand and 8 % at saturated demand. Sensor redundancy matters most at merges.
 
 ---
 
@@ -115,13 +118,15 @@ Objects that would stop a car dead, at 4,200 + 600 veh/h, 10 runs per row:
 
 ### What the simulation adds
 
-Objects lying 150–300 m ahead (10 runs per row, any policy):
+Objects lying 150–300 m ahead (hybrid, 30 runs per row; the other policies behave alike in 10 runs each):
 
 | Car sensors (each sees it 90 % of the time) | Runs with a collision |
 |---|---|
-| Not shared: each car must see it for itself | 8–10 of 10, and in several runs a second car drove into it later |
-| Shared via the road or V2V | 3 of 10 |
-| Plus road sensors | 0 of 10 |
+| Not shared: each car must see it for itself | 29–30 of 30, and in many runs a second car drove into it later |
+| Shared via the road or V2V | 5 of 30 |
+| Plus road sensors | 0 of 30 |
+
+Today's drivers hit the same objects in 3–4 of 30 runs. Unshared car sensors are clearly worse than that; shared car sensors cannot be told apart from it.
 
 ### What it means
 
@@ -146,20 +151,20 @@ England's smart-motorway evidence is the best natural experiment available (Smar
 
 ### What the simulation adds
 
-A vehicle loses propulsion around 3.7 km and coasts to a stop. It is towed 15 minutes after it stops. 4,200 + 600 veh/h, 10 runs, observed for 20 minutes. Extra delay is measured against the same traffic without the breakdown, ± the spread between runs.
+A vehicle loses propulsion around 3.7 km and coasts to a stop. It is towed 15 minutes after it stops. 4,200 + 600 veh/h, 30 runs, observed for 20 minutes. Extra delay is measured against the same traffic without the breakdown, ± the spread between runs.
 
 | System | Vehicle stopped in a live lane | Extra delay (vehicle-hours) | Collisions |
 |---|---|---|---|
-| Today, no hard shoulder | 540 s on average* | 15.4 ± 14.6 | 1 (also 1 without the breakdown) |
-| Today, with hard shoulder | 0 s | −1.2 ± 5.1 | 3 (1 without the breakdown; ≤17 km/h) |
-| SDR hybrid, no safety lane | 630 s on average* | 6.0 ± 11.3 | 0 |
-| SDR hybrid, with safety lane | **0 s** (10 of 10 reached the safety lane) | **0.0 ± 0.0** | 0 |
+| Today, no hard shoulder | 630 s on average* | 18.5 ± 12.8 | 2 (4 without the breakdown) |
+| Today, with hard shoulder | 0 s | −0.5 ± 4.1 | 3 (4 without the breakdown; ≤17 km/h) |
+| SDR hybrid, no safety lane | 540 s on average* | 6.3 ± 15.8 | 0 |
+| SDR hybrid, with safety lane | **0 s** (30 of 30 reached the safety lane) | **0.0 ± 0.0** | 0 |
 
-*\*900 s in the runs where the vehicle stopped inside the 5 km corridor (7 of 10 on SDR, 6 of 10 on today's road). In the other runs it coasted off the end of the corridor before stopping.*
+*\*900 s in the runs where the vehicle stopped inside the 5 km corridor (18 of 30 on SDR, 21 of 30 on today's road). In the other runs it coasted off the end of the corridor before stopping.*
 
-Without a safety lane, a breakdown cost SDR about 6 vehicle-hours and today's road about 15. Both figures vary so much between runs that 10 runs do not settle how large the difference is. SDR closes the lane 1 km upstream and merges traffic cooperatively, so there are no stop-and-go waves. With the lane, neither road loses anything measurable: the hard shoulder works for human drivers too, when they reach it.
+Without a safety lane, a breakdown cost SDR about 6 vehicle-hours and today's road about 18. Single runs vary a lot, but compared run by run on the same traffic SDR loses 12 vehicle-hours less (95 % interval 5 to 19), which is outside the noise. SDR closes the lane 1 km upstream and merges traffic cooperatively, so there are no stop-and-go waves. With the lane, neither road loses anything measurable: the hard shoulder works for human drivers too, when they reach it. The collision counts on today's road are within the noise of the same traffic without the breakdown.
 
-Brake loss and radio loss caused no extra delay with or without a safety lane: a brake-degraded vehicle keeps driving, and a radio-lost vehicle restarts after 20 s.
+Brake loss caused no extra delay with or without a safety lane, and radio loss 0.3 vehicle-hours either way: a brake-degraded vehicle keeps driving, and a radio-lost vehicle restarts after 20 s.
 
 ### What it means
 
@@ -182,10 +187,10 @@ The simulation answers "what happens if…". A risk model is needed for "how oft
 
 | Scenario | Brick-wall events per billion veh-km | Collisions per billion veh-km |
 |---|---|---|
-| A. Relative separation, today's detection (≈10 s, nothing shared) | 10 | 20 |
-| B. Recommended hybrid, today's detection | 8.4 | 15 |
-| C. Recommended hybrid, SDR-grade detection (road ≤1 s/99 %, car 90 %, V2V) | 1.5 | 2.6 |
-| D. As C, plus vehicles report their own lost load (90 %) | 0.4 | **0.7** |
+| A. Relative separation, today's detection (≈10 s, nothing shared) | 10 | 19 |
+| B. Recommended hybrid, today's detection | 8.4 | 13 |
+| C. Recommended hybrid, SDR-grade detection (road ≤1 s/99 %, car 90 %, V2V) | 1.5 | 2.2 |
+| D. As C, plus vehicles report their own lost load (90 %) | 0.4 | **0.6** |
 | E. Absolute separation, SDR-grade detection | 0.3 | 0.3 |
 | *For scale: debris crashes today (US, all roads)* | | *≈ 10* |
 | *For scale: casualties on GB motorways, all causes* | | *≈ 47* |
@@ -197,7 +202,9 @@ How to read it:
   1. **With today's detection, close following is not acceptable** (A and B are no better than human drivers for debris).
   2. **Fast roadside sensing does most of the work** (B → C, about 6× fewer collisions).
   3. **Lost loads are what's left,** and load monitoring by the carrying vehicle closes most of that gap (C → D).
-- Scenario D comes within a factor of three of absolute separation's object risk while keeping about 2.2 times its capacity.
+- Scenario D comes within a factor of about two of absolute separation's object risk while keeping about 1.8 times its capacity.
+- Two inputs look off after the desk research in appendix A5: England's network had about 140 lane-blocking obstructions per billion vehicle-km in 2023, not 120, and trucks probably shed 30–50 % of them, not 70 %. The model has not been re-run with these; the first raises every row by a sixth, the second moves risk from the truck rule's side to the lying-object side ([roadmap](ROADMAP.md) 2.8).
+- Scenarios C and D assume the road confirms a load falling off a truck fast enough for the gap behind it. In the simulation 0.5 s was fast enough and 1 s was not ([SDR-04](SDR-04-Viability-Assessment.md)).
 - This covers objects only. It excludes system failures (software faults, cyberattack, correlated failures). Those need their own analysis and could dominate.
 
 ---
@@ -228,7 +235,7 @@ Updates to the vehicle standard (SDR-01 §7):
 
 - **Worst case for objects.** Every object hit is treated as stopping the vehicle dead. Most real debris is driven over or pushed aside, so the collision counts overstate severity. The risk model's 10 % "heavy" share is meant to correct for that, but it is a guess.
 - **Simple sensor model.** Detection is a single probability plus a fixed delay. There are no false alarms (which would cost capacity through needless stops), no weather or lighting effects, and no correlation between cars missing the same object. Correlated misses (a low, dark object at night) would make car sensors less useful than modelled.
-- **Small samples.** Incident results are 10 runs each. They show whether something can happen and roughly how bad it is, not precise rates.
+- **Small samples.** Incident results are 10 runs each, 30 where a comparison needed them. They show whether something can happen and roughly how bad it is, not precise rates. Ten runs can mislead: the hybrid had 15 collisions in its first 10 brick-wall runs and relative separation 6, which looked like a real difference; after 30 runs it was 27 against 23.
 - **Generous human baseline.** Human drivers reach the hard shoulder whenever they can. In reality 20 % of breakdowns on conventional motorways still end in a live lane.
 - **Research quality.** Several research figures come from secondary sources or were not fully verified (marked in the sources below). The 47 casualties per billion vehicle-km figure comes from a news report of the official statistics.
 
@@ -368,6 +375,39 @@ These are the full desk-research findings behind sections 3–6. "Calc" marks a 
 - a motorway-only human-error share;
 - Dutch breakdowns per km.
 
+### A5. Lost loads from trucks (added 2026-11-19)
+
+Desk research for roadmap item 1.2: how often do trucks lose loads, and what could be built into a truck to prevent it? Most figures are from secondary sources or search excerpts and were not checked against the originals (†).
+
+**How often**
+- No road operator or agency found records which kind of vehicle an object came from. The truck share is therefore an estimate.
+- England: 21,774 obstruction "lane impacts" on the strategic road network in 2023†. DfT gives 95.8 billion vehicle-miles (154 billion vehicle-km) on that network in 2023, lorries about 11 % of it. **Calc:** about **141 lane impacts per billion vehicle-km** (the 120 in A4 used a rougher traffic estimate).
+- Flanders: only 78 "cargo loss" events a year logged by the motorway traffic centre, 2012–2022 (Vias institute 2025). Serious cargo losses are far rarer than lane impacts, which include small debris.
+- Japan: 240,000 objects handled on expressways in fiscal 2024, excluding roadkill (MLIT). Austria: about 7,200 call-outs for lost objects in 2023†.
+- US: about 53,000 debris crashes and 72 deaths a year, 2018–2023 (AAA Foundation 2025). NHTSA cannot identify unsecured-load crashes as such (GAO-13-24).
+- Trucks against other vehicles, conflicting evidence:
+  - towards trucks: 75 % of 36 North American road agencies named commercial vehicles as the main source (an opinion survey); 64 % of roadside tyre debris was truck tyres (AAA Foundation 2004);
+  - away from trucks: passenger vehicles account for 73–81 % of US crashes with improperly secured cargo (NHTSA†); in Flanders trucks are involved in about a quarter of "cargo lost before the accident" cases; England's lists include many household and garden items.
+- **Estimate:** heavy trucks shed perhaps 30–50 % of lane-blocking objects while driving about 11 % of the kilometres: about **350 events per billion truck-km** (range 150–600), roughly five times the rate of light vehicles. Confidence: moderate for the total, low for the truck share.
+
+**What is lost**
+- Cargo and vehicle parts split about evenly. England, lane impacts 2023: building materials 20 %, vehicle parts 16 %, tyres 10 %†. US crash reports 2018–23: cargo 19 %, tools and building materials 9 %, tyres and parts 29 %. US fatal debris crashes: cargo 38 %, parts 38 % (AAA Foundation 2004).
+- No data anywhere on open against enclosed bodies as the source. Fleet mix: in the US about 61 % of new trailers are dry vans and 15 % refrigerated; in Europe curtain-siders are the largest group (43 % of semi-trailer sales in 2016)†. A curtain does not count as load restraint unless the body is built to EN 12642 "Code XL".
+- **Estimate:** a rigid enclosed load space would prevent roughly 40 % (30–50 %) of truck-origin events: nearly all the cargo, none of the tyres, wheels and parts.
+
+**What could be made mandatory and built in**
+
+| Measure | Status | Evidence that it reduces lost loads |
+|---|---|---|
+| Rigid enclosed or Code XL body with door-closed sensing | Standardised (EN 12642); mature | None measured |
+| Tyre pressure and temperature monitoring, reported to the road | Mandatory on new EU trucks and heavy trailers (Regulation 2019/2144; all new registrations from July 2024) | A US field test was inconclusive on tyre failures |
+| Powered sheeting for bulk loads | Covering is law in several US states and in Australia's Northern Territory; mature | None measured |
+| Twist-lock status sensors for containers | Mostly patents; no mandate | None |
+| Lashing-tension monitoring for open and curtain-sided loads | One product on the market (BPW iGurt); early | None |
+
+- Inspections show how common poor securing is: cargo securement was 9.6 % and tyres 20.8 % of out-of-service violations in the North American Roadcheck 2024†; 44 % of vehicles in targeted load-securing checks in Flanders in 2024 were in violation (selective checks, so an overestimate).
+- **No study was found that shows a reduction in incidents from any cargo-related device.** That is the gap load monitoring (D10) has to close before a truck can be exempted from the long gap behind it.
+
 ---
 
 ## Sources
@@ -416,3 +456,22 @@ Gathered by desk research on 2026-11-19. Items marked † are from secondary sou
 - Items falling from commercial vehicles (BALI / National Highways): https://www.bali.org.uk/news/national-highways-seeking-to-tackle-load-insecurity/
 - National Highways, objects removed in 2025: https://nationalhighways.co.uk/press/abandoned-boat-and-fairground-ride-among-more-than-49-000-items-found-alongside-motorways-and-a-roads
 - FHWA, US traffic volumes 2015: https://www.fhwa.dot.gov/policyinformation/statistics/abstracts/2015/national.cfm
+
+Added for appendix A5 (lost loads from trucks, 2026-11-19):
+
+- DfT, road traffic estimates 2023, England's road networks: https://www.gov.uk/government/statistics/road-traffic-estimates-in-great-britain-2023/road-traffic-estimates-in-great-britain-2023-traffic-on-englands-road-networks
+- MLIT Japan, objects on expressways, fiscal 2023–24: https://www.mlit.go.jp/road/sisaku/ijikanri/pdf/rakkabutu_nexco.pdf
+- Vias institute 2025, load securing and road safety in Flanders (in Dutch): https://www.vias.be/publications/Impact%20van%20ladingzekering%20op%20de%20verkeersveiligheid%20in%20Vlaanderen/Impact%20van%20ladingzekering%20op%20de%20verkeersveiligheid%20in%20Vlaanderen.pdf
+- ASFINAG call-outs 2023†: https://www.vienna.at/so-oft-waren-die-asfinag-teams-2023-im-einsatz/8525293
+- AAA Foundation 2025, road debris 2018–2023: https://aaafoundation.org/wp-content/uploads/2026/01/202511-AAAFTS-Impact-Road-Debris.pdf
+- US GAO, GAO-13-24 (2012): https://www.gao.gov/assets/gao-13-24.pdf
+- Forbes & Robinson 2004, vehicle-related road debris (AAA Foundation): https://webharvest.gov/peth04/20041118034621/http://www.aaafoundation.org/pdf/vrrd.pdf
+- NHTSA, Secure Your Load†: https://www.nhtsa.gov/drive-safe-secure-your-load
+- ICCT 2018, heavy-duty trailers in Europe†: https://theicct.org/publications/market-analysis-hd-trailers-europe
+- ACT Research, trailer types†: https://www.actresearch.net/resources/knowledge-center/what-is-the-composition-of-demand-of-trailer-types-for-the-commercial-trailer-market
+- CVSA Roadcheck 2024†: https://cvsa.org/news/2024-roadcheck-results/
+- HSA Ireland, curtain-sided vehicles: https://www.hsa.ie/eng/Vehicles_at_Work/Load_Securing/Guidance_and_Publications/Curtain_Sided_Info_Sheet.pdf
+- WorkSafe NT, loose bulk loads: https://worksafe.nt.gov.au/forms-and-resources/safety-alerts/management-of-loose-bulk-loads
+- Regulation (EU) 2019/2144, Annex II (tyre pressure monitoring): https://www.legislation.gov.uk/eur/2019/2144/annex/II/2020-12-31
+- FMCSA tyre-pressure field test†: https://www.truckinginfo.com/105931/fmcsa-fleet-field-tests-show-promise-for-atis-tpms
+- BPW iGurt lashing monitor: https://www.bpw.de/en/safety

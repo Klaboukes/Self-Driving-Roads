@@ -4,6 +4,52 @@ What was built, what went wrong and how it was fixed. Many fixes are design less
 
 ---
 
+## 2026-11-19 (roadmap 1): merge order, gate waits, speed, truck rules, paired statistics (→ [report](../reports/1-questions-from-latest-results.md))
+
+Roadmap section 1, the four questions the review left open. The engine's default behaviour changed (the merge and the ramp gate), so every number was re-run.
+
+### Fixed: SDR
+- **A merging vehicle lost its place in the merge order.** Each ramp vehicle is projected into the right lane as a "ghost", and the traffic there makes room for the ghost. The ramp vehicle itself was told to stay behind the right-lane vehicle ahead of its ghost, but that vehicle's position was taken as it is on the road, not in the ghost's frame. A ramp vehicle that was slightly late therefore saw its leader "behind" where it belonged, braked, fell further back, and the gap that had been opened for it closed. Once a few vehicles were stranded this way the ramp stopped.
+  - Fix: the constraint is shifted by the distance between the vehicle and its ghost (`ghostFrame`).
+  - Result at 4,800 + 900 veh/h: the ramp lets in 882 of the 900 veh/h that arrive, where it let in 338. The hybrid serves 5,634 veh/h, where it served 5,131 (today's road: 5,261).
+  - **Lesson:** a vehicle's place in a merge order and the constraints that hold it there must be in the same frame of reference. Mixing "where its ghost is" with "where it is" works while everybody is on time, and fails exactly when the merge gets busy.
+- **The ghost of a truck was a car.** The hybrid opened a car-sized gap behind a merging truck and widened it only after the truck was in the lane (`ghostType`). Small effect on flow, but it is the gap the truck rule asks for.
+- **The ramp gate was a 45-second timer.** It released a vehicle when a slot in the right lane was predicted at the merge, or after 45 s. The prediction found a slot for about 1 in 100 vehicles, so every ramp vehicle waited 45 s, also on an empty road.
+  - Fix: the gate lets a vehicle in as soon as the ramp has room (`rampMaxWait: 0`). The ghosts already make the room at the merge.
+  - Result: below capacity nobody waits more than 4 s at either gate (the 95th percentile was 631 s on the ramp at 4,800 + 900).
+  - **Lesson:** a gate that waits for a prediction that never comes true is only a delay. Measure how often a gate condition is actually met before trusting it.
+- **The right lane was kept free for the ramp only while vehicles queued at the ramp gate.** With the timer gone there is no queue to see, so the main entry now counts ramp vehicles that arrived in the last 45 s (`rampLaneWindow`, `rampKeepLaneAbove`). Without the rule the hybrid served about 5 % less at saturation in these runs (5,765 against 6,038 veh/h; not compared run by run) and braked harder.
+
+### What it showed
+- **The roadmap named three suspects for the long gate waits** (the occupancy budget, the ramp fairness cap, the right-lane rule). None was the cause: the budget does nothing below capacity, the fairness cap was the only thing that let ramp traffic in at all, and the right-lane rule is worth 0–5 %. The cause was found by recording who waits (`m.admits`: one record per vehicle let in) and then looking at one stranded vehicle.
+  - **Lesson:** record waits per gate as a distribution before tuning anything. The mean delay over all vehicles (37 s) hid a ramp where the median wait was more than five minutes.
+- **At saturation the hybrid now brakes harder than before:** 4 hard brakes per 1,000 vehicle-km, where it had 0.3 (today's road: 72). The old figure was that low because hardly anybody was merging: the ramp let in 164 veh/h of 900.
+- **The truck-share figures got worse for the hybrid** (20 % trucks: 4,467 veh/h, was 4,810; today's road 4,895). The old run reached its figure by leaving the ramp unserved: 0–30 veh/h got in at 20–30 % trucks.
+- **Absolute separation carries more than reported** (3,300 veh/h, was 2,700), for the same reason turned round: its ramp traffic was held back too.
+
+### Added
+- **Waits per gate** in every throughput row: median, 95th percentile and longest wait, for the main entry and the on-ramp, and how much traffic each gate let in. Vehicles still waiting at the end count with their wait so far.
+- **Paired statistics** (`pairedStat`, results section 15). Two rows are compared seed by seed, with a 95 % confidence interval on the difference, and each comparison is called outside or within the noise. A comparison within the noise gets more runs once (5 → 15 throughput runs, 10 → 30 incident runs).
+  - **What went wrong:** "extend only what is within the noise" is lopsided. A comparison that looks significant after 10 runs is never checked again. The hybrid had 15 collisions in its first 10 brick-wall runs against 6 for relative separation ("outside the noise"), and 27 against 23 after 30. An incident row compared with a row that was extended now gets the same number of runs.
+  - **Lesson:** decide the number of runs before looking, or extend both ways. Ten runs of a rare event are an anecdote.
+- **Group `gates`:** the merge and gate rules one change at a time, at three demands, each against today's road and against the rules as they were.
+- **Group `speed`:** the demand sweep for hybrid and relative at a fixed 120, 100 and 80 km/h and with adaptive speed. Trip time is reported instead of trip delay, because delay is counted against each row's own speed limit and flattered the slow rows.
+- **Group `truck-rule`:** twelve truck rules at 10, 20 and 30 % trucks, for capacity and for a lost load. New engine options, all off by default: `secureLoadShare`, `truckGapConfirm`, `loadSlideDecel`, `truckBehindTruckRelative`, `truckLane`. A lost load can now slide to rest (`addDebris(x, lane, v0, slide)`).
+- **Tests:** 21 (was 12). New: the ramp is served below capacity (and is not with the old rules), every admitted vehicle is recorded, the paired statistics, the gap behind a truck under each rule, and no collision, overrun or full-force braking under any truck rule.
+
+### Findings on the truck rule
+- **Speed buys no capacity.** A lower limit adds 3 % at best and every trip takes longer. Adaptive speed for hybrid and relative is dropped as a capacity measure.
+- **Only one cheaper truck rule holds up:** no long gap behind trucks with an enclosed, monitored load. With half the trucks exempt the hybrid is 3 % above today's road at 20 % trucks. It is safe only if exempt trucks really shed nothing: when one did, the follower crashed in 9–10 of 10 runs.
+- **A confirmation time in the gap is the safe rule and the expensive one** (−12 % at 20 % trucks for 1 s).
+  - First attempt: the gap was shortened by the distance the *follower* drives in the confirmation time. That made the end of the authority depend on the follower's own speed, so a vehicle that sped up lost authority it had been given: supervision brakes and a spare distance of −6 m.
+  - Fix: the authority ends where it always did; the confirmation time is added to the follower's buffer.
+  - **Lesson:** an authority must never shrink because of what the vehicle holding it does. Extra caution goes into the buffer the vehicle keeps, not into the limit it was granted.
+- **The rule as it is does not cover a 1 s confirmation time.** With road sensors as the only witness and 1 s to confirm (what D9 asks for), the vehicle behind the truck hit a load that stops dead in 10 of 10 runs, at up to 47 km/h; with 0.5 s, in none. Open: roadmap 1.5.
+- **A truck lane made things worse** (−12 % against the rule as it is at 20 % trucks). The right lane is also the merge and exit lane, and admission control has no budget per lane, so the truck lane overfills. Open: roadmap 1.6.
+- **Buffers showed three more ways a vehicle can be surprised by a truck:** the buffer was applied to the wrong leader when a merge constraint was the binding one; a truck was "revealed" when the car in between pulled out; and during a lane change the nearer car in the new lane hid the truck in the old one. All three caused hard braking and are fixed for the rules with a confirmation time. The general case (plan against every vehicle within stopping distance) is not built: roadmap 3.6.
+
+---
+
 ## 2026-11-19 (review pass): radio loss, calibrated human baseline, statistics, tests (→ [SDR-04](../SDR-04-Viability-Assessment.md))
 
 A review of the whole project. It changed the headline: against a human baseline that behaves like a real motorway, SDR's gain is in speed, smoothness and reliability, and only partly in vehicles per hour. All numbers in the documents were re-run.
@@ -170,3 +216,7 @@ Result (section 11 of the results, `--only=today`): the plain road carries 5,680
 - Human baseline is checked against handbook capacities, not fitted to loop-detector data from a real road. It sits at the low end of the handbook range.
 - A lane change is granted on the follower's current state; with heavy radio loss the follower may still be driving on an older authority for a moment (the simulator does not wait for its acknowledgement).
 - Human drivers always reach the hard shoulder if they can; in reality 20 % of breakdowns end in a live lane.
+- Admission control counts vehicles in the whole corridor, not per lane (it matters for a truck lane).
+- The ramp gate's slot prediction almost never finds a slot, so the gate is open by default and cannot meter the ramp above capacity.
+- An authority is planned against the first vehicle ahead (two ahead when the truck gap includes a confirmation time).
+- Lost-load tests of the truck rules count road sensors only; the car's own sensor would catch some of what a slow road misses.

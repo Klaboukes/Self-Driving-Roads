@@ -141,3 +141,119 @@ test('SDR sends a broken-down vehicle to the safety lane', () => {
   assert.equal(w.m.sidetracked, 1);
   assert.ok(w.m.liveLaneStopS < 1, `stopped in a live lane for ${w.m.liveLaneStopS} s`);
 });
+
+test('SDR: the on-ramp is served below capacity, and nobody ends up standing on the ramp', () => {
+  // 4,800 + 900 veh/h is less than the hybrid can carry. Before the merge order was corrected, a ramp
+  // vehicle that had slowed down was told to stay behind a right-lane vehicle that was already beside
+  // it; it braked for that and stopped on the ramp, with the rest of the ramp traffic behind it.
+  const cfg = { mode: 'sdr', seed: 1, demandMain: 4800, demandRamp: 900 };
+  const waits = w => w.m.admits.filter(a => a.ramp && a.t > 200).map(a => a.wait).sort((a, b) => a - b);
+  const now = measure(cfg, 200, 400);
+  assert.equal(now.collisions, 0);
+  assert.ok(now.w.rampQueue.length < 10, `${now.w.rampQueue.length} waiting at the ramp`);
+  const wNow = waits(now.w);
+  assert.ok(wNow.length > 80, `${wNow.length} ramp vehicles let in`);
+  assert.ok(wNow[Math.floor(0.95 * wNow.length)] < 20, `95th percentile ramp wait ${wNow[Math.floor(0.95 * wNow.length)].toFixed(0)} s`);
+  const old = measure({ ...cfg, ghostFrame: false, ghostType: false, rampLaneWindow: 0, rampMaxWait: 45 }, 200, 400);
+  assert.ok(old.w.rampQueue.length > 3 * now.w.rampQueue.length + 20, `old rule: ${old.w.rampQueue.length} waiting at the ramp`);
+});
+
+test('every vehicle let in at a gate is recorded with its wait', () => {
+  for (const mode of ['sdr', 'human']) {
+    const w = run({ mode, seed: 2, ...DEMAND }, 150);
+    assert.equal(w.m.admits.length, w.nextId - 1 - w.mainQueue.length - w.rampQueue.length, mode);
+    assert.ok(w.m.admits.every(a => a.wait >= 0 && a.t <= w.t), mode);
+    assert.ok(w.m.admits.some(a => a.ramp) && w.m.admits.some(a => a.truck), mode);
+  }
+});
+
+test('paired comparison: the traffic both rows share drops out of the difference', () => {
+  const { pairedStat } = require('../experiments.js');
+  // five seeds with very different traffic; B is always exactly 10 above A
+  const a = [100, 300, 200, 500, 400], b = a.map(x => x + 10);
+  const same = pairedStat(b, a);
+  assert.equal(same.diff, 10);
+  assert.equal(same.verdict, 'outside the noise');
+  assert.ok(Math.abs(same.lo - 10) < 1e-9 && Math.abs(same.hi - 10) < 1e-9);
+  // a difference that changes sign from seed to seed is within the noise
+  const noisy = pairedStat([110, 290, 210, 490, 405], a);
+  assert.equal(noisy.verdict, 'within the noise');
+  assert.ok(noisy.lo < 0 && noisy.hi > 0);
+  // known case: differences 1..5 -> mean 3, sd 1.5811, t(4) = 2.776 -> half-width 1.963
+  const k = pairedStat([1, 2, 3, 4, 5], [0, 0, 0, 0, 0]);
+  assert.ok(Math.abs(k.diff - 3) < 1e-9 && Math.abs(k.hi - 4.963) < 0.001 && Math.abs(k.lo - 1.037) < 0.001, JSON.stringify(k));
+  assert.equal(pairedStat([0, 0, 0], [0, 0, 0]).verdict, 'identical');
+  assert.equal(pairedStat([1, NaN, 3], [1, 2, NaN]).n, 1);
+});
+
+// ---- cheaper truck rules (roadmap 1.2)
+const TRUCKS = { mode: 'sdr', separation: 'hybrid', truckShare: 0.2, ...DEMAND };
+
+test('truck-rule options are off by default', () => {
+  const d = SDR.DEFAULTS;
+  assert.deepEqual([d.secureLoadShare, d.truckGapConfirm, d.loadSlideDecel, d.truckBehindTruckRelative, d.truckLane], [0, 0, 0, false, false]);
+});
+
+test('the gap behind a truck: brick wall, sliding load or relative, and the confirmation time is extra buffer', () => {
+  const truck = { type: 'truck', x: 200, length: 16.5, v: 25, a: 0, bMax: 6, brakeFactor: 1, bfKnown: 1 };
+  const car = { type: 'car', id: 7, x: 100, v: 25, a: 0, bMax: 8, brakeFactor: 1, bfKnown: 1, lane: 1, laneTo: null };
+  const behind = cfg => new World({ mode: 'sdr', separation: 'hybrid', ...cfg })._eoaBehind(truck, car);
+  const wall = behind({}), rel = behind({ hybridTruckAbsolute: false }), slide = behind({ loadSlideDecel: 12 });
+  assert.ok(Math.abs(wall.e - (200 - 16.5 - 2.5)) < 1e-9, `brick wall: ${wall.e}`);
+  // a load that slides to rest at 12 m/s² travels 26 m: the gap may be that much shorter than a brick wall
+  assert.ok(rel.e > slide.e && slide.e > wall.e, `${rel.e} > ${slide.e} > ${wall.e}`);
+  assert.ok(Math.abs(slide.e - (wall.e + 25 * 25 / 24)) < 1e-9);
+  // a load that slows more gently than the follower can brake (6 m/s², against 7.2) never licenses less than the relative gap
+  assert.equal(behind({ loadSlideDecel: 6 }).e, rel.e);
+  assert.equal(behind({ loadSlideDecel: 6, truckGapConfirm: 1 }).conf, 1);
+  assert.equal(behind({ truckGapConfirm: 1 }).e, wall.e);
+  assert.equal(behind({ truckGapConfirm: 1 }).conf, 1);
+  assert.equal(wall.conf, 0);
+  // enclosed, monitored load, and a truck following a truck
+  assert.equal(new World({ mode: 'sdr' })._eoaBehind({ ...truck, secure: true }, car).e, rel.e);
+  const lorry = { ...car, type: 'truck', bMax: 6 };
+  const w = new World({ mode: 'sdr', truckBehindTruckRelative: true });
+  assert.ok(w._eoaBehind(truck, lorry).e > wall.e);
+  assert.equal(w._eoaBehind(truck, car).e, wall.e);
+});
+
+test('no truck rule behind enclosed trucks: with every truck enclosed the hybrid is relative separation', () => {
+  const a = run({ ...TRUCKS, seed: 2, secureLoadShare: 1 }, 250).stats(250), b = run({ ...TRUCKS, seed: 2, hybridTruckAbsolute: false }, 250).stats(250);
+  assert.equal(a.completed, b.completed);
+  assert.equal(a.flow, b.flow);
+  // and the share is honoured without changing who the vehicles are
+  const w = run({ ...TRUCKS, seed: 2, secureLoadShare: 0.5 }, 250);
+  const trucks = w.vehicles.filter(v => v.type === 'truck');
+  const share = trucks.filter(v => v.secure).length / trucks.length;
+  assert.ok(trucks.length > 20 && share > 0.25 && share < 0.75, `${trucks.length} trucks, ${share.toFixed(2)} enclosed`);
+  assert.ok(w.vehicles.every(v => v.type === 'truck' || !v.secure));
+});
+
+test('every truck-rule variant: no collisions, no authority overrun, no full-force braking in normal traffic', () => {
+  const variants = [{ secureLoadShare: 0.5 }, { truckGapConfirm: 1 }, { loadSlideDecel: 6, truckGapConfirm: 1 }, { truckBehindTruckRelative: true }, { truckLane: true }];
+  for (const v of variants) {
+    const r = measure({ ...TRUCKS, seed: 3, ...v }, 100, 250);
+    const name = JSON.stringify(v);
+    assert.equal(r.collisions, 0, name);
+    assert.ok(r.minSpare >= 0, `${name}: spare ${r.minSpare}`);
+    assert.equal(r.w.m.supervision, 0, `${name}: supervision brakes`);
+  }
+});
+
+test('truck lane: trucks stay in the right lane and cars do not enter in it', () => {
+  const w = run({ ...TRUCKS, seed: 1, truckLane: true }, 300);
+  const live = w.vehicles.filter(v => v.lane >= 0 && v.lane < w.S);
+  assert.ok(live.filter(v => v.type === 'truck').length > 20);
+  assert.ok(live.filter(v => v.type === 'truck').every(v => v.lane === 0), 'a truck outside the right lane');
+  // before the on-ramp nobody has had a reason to use the right lane except trucks
+  assert.equal(live.filter(v => v.type === 'car' && v.lane === 0 && v.x < w.cfg.rampStartX).length, 0);
+});
+
+test('a lost load can slide to rest', () => {
+  const w = new World({ mode: 'sdr', demandMain: 0, demandRamp: 0 });
+  const still = w.addDebris(1000, 1), sliding = w.addDebris(2000, 1, 24, 6);
+  w.run(6);
+  assert.equal(still.x, 1001);
+  assert.equal(sliding.v, 0);
+  assert.ok(Math.abs(sliding.x - (2001 + 24 * 24 / 12)) < 0.5, `came to rest at ${sliding.x}`);
+});

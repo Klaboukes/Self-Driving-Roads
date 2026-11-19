@@ -14,7 +14,7 @@ If the user names a single sub-item (`1.3`), run the same four phases for that s
 
 ## 1. Plan the item
 
-1. Read `ROADMAP.md` in full. Each sub-item has **Why**, **Do** and **Done when**. Those three are the brief: "Do" is the scope, "Done when" is the finish line. Section 3 lists its sub-items as bullets (3.1–3.4), section 4 as a numbered list (4.1–4.8).
+1. Read `ROADMAP.md` in full. Each sub-item has **Why**, **Do** and **Done when**. Those three are the brief: "Do" is the scope, "Done when" is the finish line. Section 3 lists its sub-items as bullets (3.1–3.6), section 4 as a numbered list (4.1–4.8).
 2. Resolve the item:
    - A number was given: use it. If it does not exist, say so and stop. Sub-items already marked done are skipped; if all are done, say so and stop.
    - Nothing was given: list the sections with their open sub-items, recommend one using the roadmap's "Suggested order", and ask the user which to take. Wait for the answer.
@@ -53,7 +53,7 @@ They are not negotiable inside a roadmap item:
 ### How to work
 
 - **Engine changes** (`engine.js`): run `node --test simulator/test` after every change (about a minute). Add a regression test for new behaviour and for any bug you fix. New parameters go in `DEFAULTS` with a default that leaves existing results unchanged, and get a row in the parameter table of `simulator/README.md`.
-- **Experiments** (`experiments.js`): add a new group or extend an existing one; do not write throwaway scripts whose numbers cannot be reproduced. Run only what you need with `--only=group1,group2`. The full suite takes about 20 minutes on 14 cores; run anything longer than two minutes in the background.
+- **Experiments** (`experiments.js`): add a new group or extend an existing one; do not write throwaway scripts whose numbers cannot be reproduced. Run only what you need with `--only=group1,group2`. The full suite takes about 70 minutes on 14 cores; run anything longer than two minutes in the background.
 - **One experiment run at a time per checkout.** `experiments.js` reads `results/results.json` at the start and writes it at the end, and uses every core. Two runs in the same folder lose each other's results.
 - **`--quick` overwrites `results/results.json` and `results.md`** with short, noisy runs. Use it to check that a group runs, never for numbers.
 - **Statistics:** both roads get the same traffic per seed, so compare per seed and give the spread. Say for each difference whether it is outside the noise. Add seeds where it is not, as far as the run time allows.

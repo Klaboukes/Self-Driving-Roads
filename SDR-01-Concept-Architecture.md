@@ -117,8 +117,8 @@ The envelope size depends on:
     - behind any vehicle that reports a fault;
     - in and just before segments whose road sensing is degraded.
 
-    In simulation, absolute separation alone carried about half of today's road at motorway speed, which fails priority 2. The hybrid carried about 9 % more than today's road at 10 % trucks and removed every lost-load collision ([SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md), [SDR-04](SDR-04-Viability-Assessment.md)). The absolute gap behind trucks is what the hybrid pays for that: from about 20 % trucks its capacity gain is gone.
-  - **Rule found in simulation:** size the gaps to the radio link as measured. If authority messages are lost, the road widens every vehicle's allowance for stale authority, so that lost messages cost capacity (7 % at 5 % loss) and never full-force braking.
+    In simulation, absolute separation alone carried about half of today's road at motorway speed, which fails priority 2. The hybrid carried about 12 % more than today's road at 10 % trucks and removed every lost-load collision ([SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md), [SDR-04](SDR-04-Viability-Assessment.md)). The absolute gap behind trucks is what the hybrid pays for that: at 20 % trucks it carries 9 % less than today's road. Leaving the gap out behind trucks with an enclosed, monitored load brings the gain back if at least half the trucks qualify, which makes load monitoring (D10) part of the capacity case too.
+  - **Rule found in simulation:** size the gaps to the radio link as measured. If authority messages are lost, the road widens every vehicle's allowance for stale authority, so that lost messages cost capacity (6 % at 5 % loss) and never full-force braking.
   - **Rule found in simulation:** under relative separation a follower must never assume its leader stops more gently than the follower itself can. Otherwise a weak-braking leader licenses a tailgate.
   - **What no spacing rule can fix:** a vehicle that stops dead because it hit something nobody saw. At relative-level capacity, safety against that comes from **fast detection** (D9) and **load monitoring** (D10), which make such events rare.
 
@@ -147,6 +147,7 @@ The envelope size depends on:
 
 1. **Trip booking.** A trip is requested (origin, destination, desired arrival). The network layer reserves a time-slotted route, like a train path or an airport slot. If capacity is full, it offers a different departure time instead of letting a jam form.
 2. **Ramp gates.** On-ramps are where admission control is enforced. A vehicle merges only into a slot that already exists for it, so merging becomes a zipper with no braking.
+   - **Rule found in simulation:** the slot is made by the traffic in the lane, which opens a gap for the merging vehicle while it is still on the ramp. The merging vehicle's place in that order has to be kept in the same frame of reference as the gap. A gate that waits for a free slot to be predicted only delays everybody: below capacity the simulated gate is open, and nobody waits more than a few seconds ([SDR-04](SDR-04-Viability-Assessment.md)).
 3. **Signal-free intersections.** Crossing flows are interleaved by reservation (as in the AIM research by Dresner & Stone). There are no traffic lights and no stopping when demand allows.
 4. **Platooning.** Vehicles going the same way travel in tight, coordinated groups: less air drag, more vehicles per lane. *Simulation note:* close following *is* relative separation. Breaking platoons with a brick-wall gap every N vehicles cost capacity without measurably limiting pile-ups, so it is not recommended ([SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md)).
 5. **Lane-capacity estimate.** A human-driven motorway lane carries about 1,800–2,200 veh/h, and flow can collapse by 10–20% once it breaks down. ~~Coordinated SDR lanes could plausibly reach 3,000–5,000+ veh/h~~. **Simulated** (theory, 120 km/h, per lane):
@@ -154,7 +155,7 @@ The envelope size depends on:
    - hybrid ~2,700;
    - relative ~3,150.
 
-   On the simulated 3-lane corridor with an on-ramp and 10 % trucks, the hybrid served 5,880 veh/h at 102 km/h against today's best of 5,400 at about 60 km/h (+9 %); pure relative separation served 6,810 (+26 %). With no trucks the hybrid gains 28 %; from about 20 % trucks it gains nothing. The larger gain is in flow quality: no breakdown, and about half the delay once demand exceeds today's capacity ([SDR-04](SDR-04-Viability-Assessment.md)). An earlier figure of +36 % was measured against a human baseline that was too weak.
+   On the simulated 3-lane corridor with an on-ramp and 10 % trucks, the hybrid served 6,040 veh/h at 99 km/h against today's best of 5,400 at about 60 km/h (+12 %); pure relative separation served 7,090 (+31 %). With no trucks the hybrid gains 29 %; at 20 % trucks it carries 9 % less than today's road. Slowing down to the speed at which a lane carries most in theory (about 80 km/h for the hybrid) added 3 % at best on the corridor and is not worth the longer trips. The larger gain is in flow quality: no breakdown, and less delay at every demand (19 s against 72 s where today's road is nearly full) ([SDR-04](SDR-04-Viability-Assessment.md)). An earlier figure of +36 % was measured against a human baseline that was too weak.
 6. **Emergency vehicles.** A corridor is cleared ahead of them by re-planning, not by sirens.
 
 ---
@@ -224,7 +225,7 @@ These are the problems the design must solve, not reasons to stop.
 
 | # | Decision | Options | Initial lean |
 |---|---|---|---|
-| D1 | Separation policy | Absolute / relative / hybrid | ~~Absolute first~~ → **hybrid**: relative by default, absolute behind load-carrying vehicles, behind vehicles that report a fault, and where road sensing is degraded. No platoon breaks. About +9 % on today's road at 10 % trucks, no lost-load collisions (see [SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md), [SDR-04](SDR-04-Viability-Assessment.md)) |
+| D1 | Separation policy | Absolute / relative / hybrid | ~~Absolute first~~ → **hybrid**: relative by default, absolute behind load-carrying vehicles, behind vehicles that report a fault, and where road sensing is degraded. No platoon breaks. About +12 % on today's road at 10 % trucks, no lost-load collisions; below today's road from somewhere between 10 and 20 % trucks unless trucks with an enclosed, monitored load are exempted (see [SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md), [SDR-04](SDR-04-Viability-Assessment.md)) |
 | D2 | Positioning reference | GNSS-only / road markers / road observation | All three, with road observation authoritative |
 | D3 | Segment length | 500 m / 1–2 km / 5 km | ~1–2 km (to validate by simulation) |
 | D4 | Planning horizon | 3 s / 10 s / 30 s | ~10 s detailed plan + 1–3 s authority |
@@ -232,8 +233,8 @@ These are the problems the design must solve, not reasons to stop.
 | D6 | Comms technology | C-V2X / 5G / dedicated / mixed | Two diverse paths, required |
 | D7 | Guardian sensor scope | Forward only / 360° | Forward only (keeps cost low, road covers the rest). Every guardian detection is reported to the road: one car's report protects everyone behind it ([SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md)) |
 | D8 | Who operates it | State / regulated operator / concession | To discuss |
-| D9 | Roadside object detection | Cameras / radar / lidar; spacing; confirmation time | Overlapping, at least two sensor types, **≤1 s confirmation**, ≥99 % detection, safety-critical rating. Today's incident detection (10–60 s) is far too slow ([SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md)) |
-| D10 | Load monitoring | None / trucks only / all external loads | Required for trucks, trailers and roof/rear carriers: detect a load leaving and broadcast it at once |
+| D9 | Roadside object detection | Cameras / radar / lidar; spacing; confirmation time | Overlapping, at least two sensor types, **≤1 s confirmation**, ≥99 % detection, safety-critical rating. Today's incident detection (10–60 s) is far too slow ([SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md)). Open: for a load falling off a truck, 0.5 s was fast enough for the gap the hybrid keeps and 1 s was not ([SDR-04](SDR-04-Viability-Assessment.md)) |
+| D10 | Load monitoring | None / trucks only / all external loads | Required for trucks, trailers and roof/rear carriers: detect a load leaving and broadcast it at once. A truck that can vouch for its load (enclosed body, monitored doors, tyres and wheels) could be followed at the normal gap; how far that can be trusted is unproven ([SDR-04](SDR-04-Viability-Assessment.md)) |
 | D11 | Safety lane | None / refuge areas only / continuous lane | Continuous safety lane (the current hard shoulder) plus refuge areas at junctions; the road sidetracks faulty vehicles while they still move |
 | D12 | Fencing and access control | Partial / full | Full fencing with wildlife crossings; pedestrian intrusion is treated as an object |
 

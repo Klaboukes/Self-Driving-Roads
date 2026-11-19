@@ -20,13 +20,15 @@ python -m http.server 8765 --directory simulator
 
 Then browse to http://localhost:8765.
 
-Headless experiments (Node 18+, no dependencies), about 20 minutes on a 14-core machine:
+Headless experiments (Node 18+, no dependencies), about 70 minutes on a 14-core machine (2,700 runs, plus the extra runs for comparisons that are within the noise):
 
 ```powershell
 node simulator/experiments.js
 ```
 
-Results go to `results/results.md` and `results/results.json`. Throughput rows are the mean of 5 runs with different traffic, shown with the standard deviation between runs (±); incident rows are 10 runs each. Add `--quick` for a short smoke run, or `--only=hybrid,objects-150` to re-run selected groups (the others are kept from the previous run, and each section of the report says which run it came from). Groups: `demand`, `incidents`, `hybrid`, `objects-150`, `objects-300`, `objects-truck`, `safety-breakdown`, `safety-brakes`, `safety-comms`, `sensors`, `weather`, `theory`, `packet-loss`, `trucks`, `today`.
+Results go to `results/results.md` and `results/results.json`. Throughput rows are the mean of 5 runs with different traffic, shown with the standard deviation between runs (±); incident rows are 10 runs each. Add `--quick` for a short smoke run, or `--only=hybrid,objects-150` to re-run selected groups (the others are kept from the previous run, and each section of the report says which run it came from). Groups: `demand`, `incidents`, `hybrid`, `objects-150`, `objects-300`, `objects-truck`, `safety-breakdown`, `safety-brakes`, `safety-comms`, `sensors`, `weather`, `theory`, `packet-loss`, `trucks`, `today`, `gates`, `speed`, `truck-rule`.
+
+**Which differences are real.** Both roads, and every variant, get the same traffic for the same seed. The last section of the results therefore compares two rows per seed and gives the mean difference with a 95 % confidence interval, and says whether it is outside the noise (the interval does not include zero). A comparison that is within the noise after the standard number of runs gets more runs once, up to 15 per throughput row and 30 per incident row, and is reported as it then stands. An incident row compared with a row that was extended gets the same number of runs: a collision count from 10 runs can look like a real difference by chance (the hybrid had 15 collisions in its first 10 brick-wall runs against 6 for relative separation, and 27 against 23 after 30). Comparing the "±" of two rows by eye is too pessimistic, because most of that spread is traffic the two rows share.
 
 Regression tests, about a minute:
 
@@ -34,7 +36,7 @@ Regression tests, about a minute:
 node --test simulator/test
 ```
 
-They check that a seed reproduces exactly, that both roads get the same vehicles, that SDR has no collisions and never overruns an authority (also with 20 % radio loss), that today's road flows freely below capacity, and that the fail-safe responses work. Run them after any change to `engine.js`.
+They check that a seed reproduces exactly, that both roads get the same vehicles, that SDR has no collisions and never overruns an authority (also with 20 % radio loss, and under every truck-rule variant), that the on-ramp is served below capacity, that today's road flows freely below capacity, that the fail-safe responses work, and that the paired statistics are computed correctly. Run them after any change to `engine.js`.
 
 ## What you can do in the browser
 
@@ -61,11 +63,12 @@ The architecture follows the concept document:
 - **Vehicles** track their authority with a gap controller, include a 0.2 s actuator delay, and plan with 90 % of their guaranteed braking. A **supervision brake** applies full braking one step before the vehicle could no longer stop inside the last authority it received. The check counts the commands already on their way through the actuator, so a granted authority is never overrun (`minSpare` in `stats()` is the smallest distance left, and stays at or above zero). If no fresh authority arrives within 1.5 s, the vehicle makes a **safe stop** before its last EoA.
 - **Radio loss:** the road sees which authorities were acknowledged, so it knows the loss rate (`lossEst`). It widens the stale-authority allowance in every vehicle's buffer until a run of lost messages long enough to outlast it is rare (`lossTolerance`, 1 in 10,000 control cycles). Lost messages then cost capacity instead of causing full-force braking. Set `lossAdaptive: false` to see the difference.
 - The **guardian** is an onboard sensor with 120 m range that sees only the first object ahead. It can only brake, and only when that object is closer than the vehicle can stop for. SDR speed is capped so the guardian can always stop for a static object within its range. On ice that means about 85 km/h.
-- **Merging** uses *virtual vehicles*. Each ramp vehicle is projected into lane 0 as a "ghost" at the position matching its predicted arrival time, so mainline traffic opens a gap well before the merge. Exiting vehicles are pre-positioned in the right lane from the start, because trip booking tells the road where they're going.
+- **Merging** uses *virtual vehicles*. Each ramp vehicle is projected into lane 0 as a "ghost" at the position matching its predicted arrival time, so mainline traffic opens a gap well before the merge. The ghost of a truck is a truck, so the hybrid opens the truck gap behind it. The ramp vehicle in turn keeps its place behind the right-lane vehicle ahead of its ghost; that place is carried over to where the vehicle really is on the ramp (`ghostFrame`). Exiting vehicles are pre-positioned in the right lane from the start, because trip booking tells the road where they're going.
 - **Hybrid separation:** relative by default, with an absolute (brick-wall) gap where the risk is higher: every 10th vehicle keeps one (a *platoon break*), behind any vehicle that reports a fault, and in or just before a segment whose road sensors are down. Optional: also behind every truck (`hybridTruckAbsolute`), because most road debris falls off vehicles. Under relative separation a follower never assumes its leader stops more gently than it can itself, so a weak-braking leader can't license a tailgate.
+- **Cheaper truck rules** (all off by default, tested in the `truck-rule` group): no long gap behind trucks with an enclosed, monitored load (`secureLoadShare`); a gap that also covers the road's confirmation time (`truckGapConfirm`, added to the follower's buffer, never to the authority); a gap for a load that slides to rest instead of stopping dead (`loadSlideDecel`); trucks following trucks at a relative gap (`truckBehindTruckRelative`); and a truck lane (`truckLane`).
 - **Detection layers:** a new object is confirmed by the road sensors with probability `roadDetectProb` after 0.5 s. Each vehicle's own sensor sees it within 120 m with probability `carDetectProb` (rolled per vehicle). A detecting vehicle reports it to the road (`carSensorShare: 'road'`, confirmed one control cycle later) and optionally straight to nearby vehicles (`'v2v'`, 50 ms).
 - **Faults and the safety lane:** a brake fault is reported after 0.5 s (sooner once the vehicle brakes). A faulty, broken-down or radio-lost vehicle is *sidetracked*: the road works it right lane by lane with cooperative merges, then into the safety lane where that is accessible (not across the on-ramp or the exit). There it drives at 60 km/h, or stops if it has broken down. A vehicle whose radio fails in lane 1 pulls into the safety lane as part of its safe stop. A blocked lane is closed 1 km upstream, and vehicles that can no longer reach the exit are rerouted.
-- **Admission control** (network layer): the main entry admits vehicles only while the stretch up to the merge holds fewer vehicles than fit at critical (capacity) density. The ramp gate releases a vehicle only when a lane-0 slot is predicted at the merge, or after 45 s for fairness. *Adaptive speed* drops to the capacity-optimal speed (never below 60 km/h) when queues build.
+- **Admission control** (network layer): the main entry admits vehicles only while the stretch up to the merge holds fewer vehicles than fit at critical (capacity) density, and lets no car into the right lane while ramp traffic is due at the merge. The ramp gate lets a vehicle in as soon as the ramp has room. (It used to wait for a predicted lane-0 slot or 45 s; the prediction found a slot about 1 % of the time, so everybody waited 45 s. `rampMaxWait: 45` brings that back.) *Adaptive speed* drops to the capacity-optimal speed (never below 60 km/h) when queues build; it was tested with every policy and buys no capacity worth having.
 - **Failed segment:** its vehicles get no authority and make safe stops. Upstream vehicles get no *new* authority into it, but authority already granted stays valid, which is the concept's "every grant includes a way out" principle.
 
 ## How today's road works
@@ -108,7 +111,13 @@ All parameters are in `DEFAULTS` at the top of [engine.js](engine.js). Pass over
 | | `carDetectProb`, `carSensorShare`, `v2vLatency` | 100 %, `'road'`, 0.05 s | Car sensors and what they do with a detection |
 | Safety lane | `safetyLane`, `safetyLaneSpeed` | off, 16.7 m/s | Safety lane / hard shoulder |
 | | `breakdownClearTime`, `coastDecel` | 900 s, 0.4 m/s² | Breakdowns |
-| SDR tuning | `rampMaxWait`, `budgetFactor` | 45 s, 1.0 | Ramp-gate fairness; corridor fill level for admission |
+| SDR policy: truck rule | `secureLoadShare` | 0 | Share of trucks with an enclosed, monitored load; the hybrid keeps no absolute gap behind them |
+| | `truckGapConfirm` | 0 s | The gap behind a truck also covers this confirmation time (extra buffer for the follower) |
+| | `loadSlideDecel` | 0 (stops dead) | The gap behind a truck assumes a lost load slides to rest at this rate (m/s²); never less than the relative gap |
+| | `truckBehindTruckRelative`, `truckLane` | off, off | A truck behind a truck keeps a relative gap; trucks keep to the right lane and cars use it only to get on and off |
+| SDR tuning | `rampMaxWait`, `budgetFactor` | 0 s, 1.0 | Ramp gate: wait when no lane-0 slot is predicted; corridor fill level for admission |
+| | `rampKeepLaneAbove`, `rampLaneWindow` | 2, 45 s | Main entry lets no car into the right lane while more than this many ramp vehicles are due at the merge (waiting, or arrived in the window) |
+| | `ghostFrame`, `ghostType` | on, on | Merging: the ramp vehicle's place in the merge order is carried over to where it is on the ramp; a truck's ghost is a truck. Off = the rules before 2026-11-19, kept to show the difference |
 | | `approachMinRoom`, `approachRef`, `laneChangeBufFactor` | 2 m, `'rate'`, 1.0 | Approach braking and lane-change margins |
 | | `laneCloseDist` | 1,000 m | A blocked lane is closed this far upstream |
 | Incidents | `incidentClearTime`, `commsLossDuration` | 180 s, 20 s | Clearing crashes/debris; radio outage length |
@@ -118,9 +127,9 @@ The human driver model has its own constants in `HUMAN`, just below `DEFAULTS`: 
 
 Vehicle types: car 4.5 m, 2.0 m/s² acceleration, 8 m/s² maximum braking, 36 m/s top speed; truck 16.5 m, 0.8 m/s², 6 m/s², 25 m/s.
 
-`stats()` also returns `lossEst` (measured radio loss) and `staleExtra` (the allowance added for it, in seconds).
+`stats()` also returns `lossEst` (measured radio loss) and `staleExtra` (the allowance added for it, in seconds). `world.m.admits` holds one record per vehicle let in at a gate: time, wait, which gate, vehicle type.
 
-Fault API: `addDebris(x, lane)`, `dropObjectAhead(x, lane, D)`, `suddenStop(x)`, `degradeBrakes(x)`, `breakdown(x)`, `commsLoss(x)`, `toggleSegment(i)`, `toggleSensors(i)`, `clearFaults()`. Observation: `stats(windowS)`, `speedProfile(binSize)`.
+Fault API: `addDebris(x, lane[, v0, slide])` (an object lying still, or one that lands at speed `v0` and slides to rest at `slide` m/s²), `dropObjectAhead(x, lane, D)`, `suddenStop(x)`, `degradeBrakes(x)`, `breakdown(x)`, `commsLoss(x)`, `toggleSegment(i)`, `toggleSensors(i)`, `clearFaults()`. Observation: `stats(windowS)`, `speedProfile(binSize)`.
 
 The development history, including the bugs found and the design lessons, is in [CHANGELOG.md](CHANGELOG.md).
 
@@ -129,6 +138,8 @@ The development history, including the bugs found and the design lessons, is in 
 - This is a **concept model, not a validated traffic model**. The human baseline is checked against handbook capacities (see above) but not fitted to loop-detector data from a real road. SDR results depend on assumed parameters (braking, delays, margins), which are all in `DEFAULTS` at the top of `engine.js`.
 - A lane change is granted on the follower's current state. With heavy radio loss the follower may still be driving on an older authority for a moment; the simulator does not wait for its acknowledgement.
 - One straight corridor only: no network routing, no trip booking across a network, no intersections.
+- Admission control counts vehicles in the whole corridor, not per lane. That is enough for the default rules, but not for a truck lane: the right lane fills with trucks and the on-ramp can no longer merge into it.
+- An authority is set against the first vehicle ahead. If that vehicle pulls out and a truck is next, the hybrid's longer gap applies at once. With the default rules the gap is already there in nearly all cases; with a confirmation time in the truck gap the road also looks one vehicle further ahead.
 - Sensors are perfect apart from fixed margins and the detection probabilities above (no noise model, no false alarms). An object that is hit is treated as stopping the vehicle dead (worst case); in reality most debris is driven over or pushed aside.
 - Collisions are rear-end or merge contacts in one dimension. There's no crash physics, and crashed vehicles are cleared after 3 minutes.
 - Vehicle dynamics are point-mass with acceleration limits and an actuator delay. There's no steering model.
