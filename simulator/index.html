@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDR Simulator</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <h1>SDR Simulator</h1>
+    <p class="sub">5 km motorway · 3 lanes · on-ramp at 2.0 km · off-ramp at 3.5 km. Same traffic on both roads.</p>
+  </div>
+  <div class="transport">
+    <button id="playPause" class="btn primary" aria-label="Pause">Pause</button>
+    <label class="inline">Speed
+      <select id="simSpeed">
+        <option value="1">1×</option><option value="2">2×</option><option value="5" selected>5×</option>
+        <option value="10">10×</option><option value="30">30×</option>
+      </select>
+    </label>
+    <button id="reset" class="btn">Restart</button>
+    <button id="newTraffic" class="btn">New traffic</button>
+    <span class="clock" id="clock">0:00</span>
+    <button id="themeToggle" class="btn ghost" aria-label="Toggle light/dark">◐</button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="panel" id="controls">
+    <section>
+      <h2>Traffic demand</h2>
+      <label class="slider">Main entry <output id="demandMainOut"></output>
+        <input type="range" id="demandMain" min="0" max="7000" step="100" value="4500"></label>
+      <label class="slider">On-ramp <output id="demandRampOut"></output>
+        <input type="range" id="demandRamp" min="0" max="1500" step="50" value="900"></label>
+      <label class="slider">Trucks <output id="truckShareOut"></output>
+        <input type="range" id="truckShare" min="0" max="30" step="1" value="10"></label>
+    </section>
+
+    <section>
+      <h2>Weather</h2>
+      <div class="seg" role="radiogroup" data-name="weather">
+        <button data-value="1.0" class="on">Dry</button><button data-value="0.7">Wet</button><button data-value="0.3">Ice</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>SDR policy</h2>
+      <div class="field-label">Separation <span class="hint">(decision D1)</span></div>
+      <div class="seg" role="radiogroup" data-name="separation">
+        <button data-value="absolute" class="on" title="Assume the vehicle ahead could stop instantly">Absolute</button>
+        <button data-value="relative" title="Assume the vehicle ahead brakes at most at its certified maximum">Relative</button>
+        <button data-value="hybrid" title="Relative, plus an absolute gap behind trucks, behind faulty vehicles and where road sensors are down">Hybrid</button>
+      </div>
+      <div class="field-label">Speed policy</div>
+      <div class="seg" role="radiogroup" data-name="speedPolicy">
+        <button data-value="fixed" class="on" title="Always drive at the speed limit">Fixed</button>
+        <button data-value="adaptive" title="Drop to the capacity-optimal speed when queues build">Adaptive</button>
+      </div>
+      <label class="slider">Speed limit <output id="speedLimitOut"></output>
+        <input type="range" id="speedLimit" min="60" max="130" step="5" value="120"></label>
+      <label class="slider">Radio packet loss <output id="packetLossOut"></output>
+        <input type="range" id="packetLoss" min="0" max="50" step="1" value="0"></label>
+    </section>
+
+    <section>
+      <h2>Object detection</h2>
+      <label class="slider">Road cameras see an object <output id="roadDetectOut"></output>
+        <input type="range" id="roadDetect" min="0" max="100" step="5" value="100"></label>
+      <label class="slider">A car's own sensor sees it <output id="carDetectOut"></output>
+        <input type="range" id="carDetect" min="0" max="100" step="5" value="100"></label>
+      <div class="field-label">A car that sees it…</div>
+      <div class="seg" role="radiogroup" data-name="carSensorShare">
+        <button data-value="none" title="Only brakes itself">Keeps it</button>
+        <button data-value="road" class="on" title="Reports it to the segment controller">Tells road</button>
+        <button data-value="v2v" title="Reports it to the road and directly to nearby vehicles">+ V2V</button>
+      </div>
+      <label class="check"><input type="checkbox" id="safetyLane"> Safety lane <span class="hint">(hard shoulder on today's road)</span></label>
+    </section>
+
+    <section>
+      <h2>Incidents</h2>
+      <label class="slider">Location <output id="focusOut"></output>
+        <input type="range" id="focus" min="100" max="4900" step="10" value="3000"></label>
+      <p class="hint">Also: click the overview strip. The close-up follows this point.</p>
+      <div class="incident-grid">
+        <label class="inline">Lane
+          <select id="debrisLane"><option value="0">1 (right)</option><option value="1" selected>2</option><option value="2">3 (left)</option></select>
+        </label>
+        <button class="btn" id="incDebris" title="Drop debris on the road at this location">Drop debris</button>
+        <button class="btn" id="incBrick" title="A vehicle here hits something no sensor saw and stops dead">Brick-wall stop</button>
+        <button class="btn" id="incBrakes" title="One vehicle here instantly loses half its braking">Brake loss</button>
+        <button class="btn" id="incBreakdown" title="One vehicle here loses propulsion and coasts to a stop">Breakdown</button>
+        <button class="btn" id="incComms" title="One SDR vehicle here loses its radio for 20 s">Radio loss <span class="tag">SDR</span></button>
+        <button class="btn" id="incSegment" title="The segment controller here fails (toggle)">Fail segment <span class="tag">SDR</span></button>
+        <button class="btn" id="incSensors" title="The road cameras/radar in this segment stop working (toggle)">Sensors down <span class="tag">SDR</span></button>
+        <button class="btn ghost" id="incClear">Clear all incidents</button>
+      </div>
+    </section>
+
+    <section>
+      <label class="check"><input type="checkbox" id="compare" checked> Show today's road for comparison</label>
+    </section>
+
+    <section class="events">
+      <h2>Event log</h2>
+      <ol id="eventLog" reversed></ol>
+    </section>
+  </aside>
+
+  <main class="worlds">
+    <article class="world" id="world-sdr">
+      <div class="world-head">
+        <h2><span class="dot sdr"></span>Self Driving Road <span class="muted" id="sdrPolicyLabel"></span></h2>
+        <div class="tiles" id="tiles-sdr"></div>
+      </div>
+      <figure class="view">
+        <figcaption>Whole corridor <span class="muted">· click to move the close-up</span></figcaption>
+        <div class="canvas-wrap overview"><canvas id="ov-sdr"></canvas></div>
+      </figure>
+      <figure class="view">
+        <figcaption>Close-up <span class="muted" id="zoomLabel-sdr"></span></figcaption>
+        <div class="canvas-wrap zoom"><canvas id="zoom-sdr"></canvas></div>
+      </figure>
+      <figure class="view">
+        <figcaption>Speed over time and place <span class="muted">· last 10 min, newest at top; <span class="slowWord">dark</span> = slow</span></figcaption>
+        <div class="canvas-wrap ts"><canvas id="ts-sdr"></canvas></div>
+      </figure>
+    </article>
+
+    <article class="world" id="world-human">
+      <div class="world-head">
+        <h2><span class="dot human"></span>Today's road <span class="muted">· 100 % human drivers</span></h2>
+        <div class="tiles" id="tiles-human"></div>
+      </div>
+      <figure class="view">
+        <figcaption>Whole corridor</figcaption>
+        <div class="canvas-wrap overview"><canvas id="ov-human"></canvas></div>
+      </figure>
+      <figure class="view">
+        <figcaption>Close-up <span class="muted" id="zoomLabel-human"></span></figcaption>
+        <div class="canvas-wrap zoom"><canvas id="zoom-human"></canvas></div>
+      </figure>
+      <figure class="view">
+        <figcaption>Speed over time and place <span class="muted">· last 10 min, newest at top; <span class="slowWord">dark</span> = slow</span></figcaption>
+        <div class="canvas-wrap ts"><canvas id="ts-human"></canvas></div>
+      </figure>
+    </article>
+
+    <article class="world legend-card">
+      <h2>How to read the views</h2>
+      <div class="legend">
+        <span><span class="ramp"></span> Vehicle and cell colour: speed (<span class="fastWord">light</span> = free flow, <span class="slowWord">dark</span> = slow / stopped)</span>
+        <span><span class="sw envelope"></span> SDR movement authority: road the vehicle may use (close-up)</span>
+        <span><span class="glyph warn">S</span> Safe stop: authority expired, stopping on its own</span>
+        <span><span class="glyph crit">G</span> Guardian sensor braking</span>
+        <span><span class="glyph crit">✕</span> Crashed or stopped dead</span>
+        <span><span class="glyph serious">R</span> Radio lost &nbsp; <span class="glyph serious">B</span> Brakes degraded &nbsp; <span class="glyph serious">F</span> Broken down</span>
+        <span><span class="glyph crit">▲</span> Debris (faint until the road sensors confirm it)</span>
+        <span><span class="sw failed"></span> Failed segment controller</span>
+        <span><span class="sw sensors"></span> Road sensors down</span>
+        <span><span class="sw shoulder"></span> Safety lane / hard shoulder</span>
+      </div>
+    </article>
+
+    <article class="world chart-card">
+      <h2>Lane capacity vs speed <span class="muted" id="capWeather"></span></h2>
+      <p class="muted small">Theoretical steady-state capacity per lane (cars only). Dots: what each road measures right now (throughput per lane at the 4.5 km detector, after 20 % of traffic has exited, vs mean speed).</p>
+      <div class="chart-legend" id="capLegend"></div>
+      <div class="canvas-wrap cap"><canvas id="capChart"></canvas><div class="tooltip" id="capTip" hidden></div></div>
+      <details>
+        <summary>Show as table</summary>
+        <div id="capTable"></div>
+      </details>
+    </article>
+  </main>
+</div>
+
+<script src="engine.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>
