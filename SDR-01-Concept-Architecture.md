@@ -24,7 +24,7 @@ A self-driving car tries to *understand* an unpredictable world using its own se
 
 ---
 
-## 2. Design principles (in priority order: safety → efficiency → speed)
+## 2. Design principles (in priority order: safety → efficiency → speed → environment → comfort)
 
 ### Safety
 1. **Movement authority, not suggestions.** A vehicle may only occupy space-time the system has explicitly granted it. With no valid grant, it stops. (This comes from railway signalling: ETCS Level 3 and CBTC moving-block systems.)
@@ -41,6 +41,16 @@ A self-driving car tries to *understand* an unpredictable world using its own se
 
 ### Speed
 10. **Steady, predictable travel time comes before top speed.** The system lowers cruising speed when that raises throughput or margins. Higher speeds are allowed on segments that have proven themselves.
+
+### Environment
+11. **No braking the traffic does not need.** Every brake throws away energy that the next acceleration has to put back. Plans keep speed steady and avoid slowing down only to speed up again.
+12. **Energy is a planning cost.** Where two plans are equally safe and carry as much traffic, the road picks the one that uses less energy: a slightly lower cruising speed, or vehicles lined up so that followers ride in the slipstream of the vehicle ahead. A gap is never shortened for the slipstream alone.
+13. **Gains are claimed net.** Air drag grows with the square of speed. A road that keeps traffic moving at 100 km/h where today's road would crawl at 60 uses more energy per kilometre for that reason, even without stop-and-go. Environmental gains are stated after that cost.
+
+### Comfort
+14. **Nobody has to drive.** The road plans and the vehicle executes, so occupants can read, work or sleep. A driver is needed only at the exit (§8).
+15. **Smooth plans.** Normal plans stay within comfort limits for acceleration, braking and jerk (how fast acceleration changes), well below what the vehicle can do. Hard braking is kept for safety: the guardian, a safe stop, an object on the road. Lane changes happen only when the trip or the traffic needs them.
+16. **Comfort never buys back safety margin.** A safe stop brakes as hard as it must. Because any trip can include one, occupants stay belted and loose objects are stowed, as in any vehicle.
 
 ---
 

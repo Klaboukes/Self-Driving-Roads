@@ -24,6 +24,9 @@ These are ideas for what to do next, ordered by how much they could change the c
 | 2.8 | Risk-model inputs from the lost-load research | S | The object-risk figures | open (new) |
 | 3.1–3.6 | Engineering hygiene | S–M | Nothing; it keeps the rest reliable | open |
 | 4 | Beyond the simulator | L | Viability as a whole | open |
+| 5.1 | Energy per vehicle-km | M | The environmental case | open (new) |
+| 5.2 | The slipstream in close formations | M | The environmental case, the truck rule (D1) | open (new) |
+| 5.3 | Ride comfort | S–M | The comfort case, the control law | open (new) |
 
 ---
 
@@ -168,6 +171,41 @@ These decide whether SDR is viable, and no amount of simulation settles them. Mo
 
 ---
 
+## 5. Environment and comfort — new, 2026-11-19
+
+Two factors added to the design principles after safety, efficiency and speed ([SDR-01](SDR-01-Concept-Architecture.md) §2, principles 11–16). They come last in priority, so they never buy back safety margin or capacity; but they are part of the case for SDR and have hardly been measured. What the simulator records today: hard brakes (stronger than 4 m/s²) per 1,000 vehicle-km, and the energy lost in braking, counted as if every vehicle weighed 1,500 kg.
+
+### 5.1 Energy per vehicle-km (M)
+
+- **Why:** SDR loses about half as much energy in braking as today's road (25–44 against 48–90 Wh per vehicle-km) and brakes hard 94–100 % less often. That is the only energy figure there is, and it leaves out most of the energy a vehicle uses. Above capacity SDR keeps traffic at about 100 km/h where today's road crawls at 60. Air drag per kilometre grows with the square of speed: for a typical car roughly 75 Wh/km at 100 km/h against 30 at 60 (an estimate, not modelled). That difference is about as large as the braking saving, so above capacity the net gain is unknown and could be negative. Electric vehicles recover a large part of their braking energy, which shrinks SDR's advantage further.
+- **Do:**
+  - give each vehicle type an energy model: rolling resistance, air drag, acceleration, drivetrain efficiency, and the share of braking energy recovered (a parameter: none for combustion engines, about 60 % for electric);
+  - count the energy of vehicles waiting at a gate or standing in a queue;
+  - report Wh per vehicle-km in the demand sweep, the truck-share sweep and the speed table (item 1.3), for a combustion and an electric fleet;
+  - compare per seed with today's road, as in item 1.4.
+- **Done when:** SDR-04 states the net energy difference per vehicle-km at each demand, for both fleets, with its interval, and says at which demand the higher speed eats the gain from smooth flow.
+
+### 5.2 The slipstream in close formations (M)
+
+- **Why:** a vehicle in the slipstream of the one ahead meets less air drag; truck-platooning trials report savings for the following truck at gaps of about 10–15 m. SDR's gaps are much longer than that: under relative separation about 30 m between bumpers at 100–120 km/h (from the gap formula in `engine.js`), and the hybrid keeps its longest gaps behind trucks, where the slipstream is largest. The gain at the gaps SDR actually keeps may be small, and shortening gaps for it would trade safety for energy.
+- **Do:**
+  - collect published figures for drag reduction as a function of the gap, per pair (car behind car, car behind truck, truck behind truck), and add them to the energy model of 5.1;
+  - record the distribution of gaps per pair in the simulator, and report the slipstream saving at those gaps;
+  - work out what lining up vehicles of the same type would save (the road chooses who follows whom at the merge and at lane changes), without shortening any gap;
+  - state what shorter gaps would save, next to what they cost in safety, for when load monitoring (4.4) or the confirmation time (1.5) changes the gap behind trucks.
+- **Done when:** the slipstream saving at SDR's gaps is known, and it is clear whether any ordering or gap rule is worth adopting for energy alone.
+
+### 5.3 Ride comfort (S–M)
+
+- **Why:** "sit back and enjoy the ride" is a promise of SDR, but only hard brakes are measured. Everyday smoothness (acceleration, jerk, lane changes) is not, and neither is how often the events SDR adds itself interrupt a trip: supervision brakes after lost messages (2.3), safe stops, guardian activations, stops for false alarms (2.4) and waiting at a gate. The SDR control law has no jerk limit that anyone has checked.
+- **Do:**
+  - record per trip the RMS acceleration (weighted as in ISO 2631-1 if practical), the largest jerk, lane changes per km, and the number of events above comfort limits (for example braking stronger than 2 m/s², jerk above 2 m/s³);
+  - count the SDR-specific interruptions per 1,000 trips, by cause;
+  - if SDR plans exceed the limits in normal traffic, add comfort limits to the control law (principle 15) and measure what they cost in capacity.
+- **Done when:** there is a comfort table per system and demand, and SDR-04 says whether an SDR trip is smoother than today's in normal traffic, and how often an SDR trip is interrupted by a hard event.
+
+---
+
 ## Suggested order
 
 1. ~~Items 1.1, 1.3 and 1.4 together~~ and ~~item 1.2~~: worked through on 2026-11-19.
@@ -175,3 +213,4 @@ These decide whether SDR is viable, and no amount of simulation settles them. Mo
 3. Items 3.1 and 3.2 alongside, so later changes stay safe.
 4. Item 2.1 as soon as detector data is at hand: it underlies every comparison.
 5. The rest of section 2 in any order, and section 4 in parallel where other people or hardware are needed.
+6. **Section 5 (environment and comfort)** can start at any time: it adds measurements and does not change how the road drives, except for a jerk limit if 5.3 finds one is needed. Item 5.1 first, since 5.2 builds on its energy model.
