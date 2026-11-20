@@ -1,6 +1,6 @@
 # SDR roadmap: further work and investigations
 
-Status: proposals from the review of 2026-11-19 · nothing here is decided · section 1 worked through on 2026-11-19 ([report](reports/1-questions-from-latest-results.md))
+Status: proposals from the review of 2026-11-19 · nothing here is decided · section 1 worked through on 2026-11-19 ([report](reports/1-questions-from-latest-results.md)) · section 2 worked through on 2026-11-19 and 20 ([report](reports/2-make-the-model-more-trustworthy.md))
 
 These are ideas for what to do next, ordered by how much they could change the conclusions in [SDR-04](SDR-04-Viability-Assessment.md) and how cheap they are to try. Each item says why it matters, what to do and when it counts as done. The sizes are rough guesses: **S** is a few hours, **M** a day or two, **L** weeks or work that needs outside data or hardware.
 
@@ -14,15 +14,17 @@ These are ideas for what to do next, ordered by how much they could change the c
 | 1.4 | Tighter statistics | S | Which differences are real | done |
 | 1.5 | The truck gap and the confirmation time | S | The sensing requirement (D9), the truck rule (D1) | open (new) |
 | 1.6 | A truck lane with its own admission rules | M | The capacity gain on freight routes | open (new) |
-| 2.1 | Fit today's road to detector data | L | Every comparison | open |
-| 2.2 | Sensitivity of the SDR assumptions | M | Confidence in all SDR figures | open |
-| 2.3 | Realistic radio loss | M | The radio requirement (D6) | open |
-| 2.4 | Sensor false alarms and shared misses | M | The sensing requirement (D9) | open |
-| 2.5 | Check the pile-up on today's road | M | The safety comparison | open |
-| 2.6 | A policy for ice | S | Weather results | open |
-| 2.7 | More road layouts | M–L | How general the results are | open |
-| 2.8 | Risk-model inputs from the lost-load research | S | The object-risk figures | open (new) |
-| 3.1–3.6 | Engineering hygiene | S–M | Nothing; it keeps the rest reliable | open |
+| 2.1 | Fit today's road to detector data | L | Every comparison | partly done |
+| 2.2 | Sensitivity of the SDR assumptions | M | Confidence in all SDR figures | done |
+| 2.3 | Realistic radio loss | M | The radio requirement (D6) | done |
+| 2.4 | Sensor false alarms and shared misses | M | The sensing requirement (D9) | done |
+| 2.5 | Check the pile-up on today's road | M | The safety comparison | partly done |
+| 2.6 | A policy for ice | S | Weather results | done |
+| 2.7 | More road layouts | M–L | How general the results are | partly done |
+| 2.8 | Risk-model inputs from the lost-load research | S | The object-risk figures | done |
+| 2.9 | Today's drivers: capacity drop and swerving | M | Every comparison, the safety comparison | open (new) |
+| 2.10 | Layouts that need new geometry | M–L | How general the results are | open (new) |
+| 3.1–3.7 | Engineering hygiene | S–M | Nothing; it keeps the rest reliable | open |
 | 4 | Beyond the simulator | L | Viability as a whole | open |
 | 5.1 | Energy per vehicle-km | M | The environmental case | open (new) |
 | 5.2 | The slipstream in close formations | M | The environmental case, the truck rule (D1) | open (new) |
@@ -77,6 +79,7 @@ These are ideas for what to do next, ordered by how much they could change the c
   - decide who covers the difference: a faster D9 behind trucks, the truck's own load monitoring (D10) as first witness, or a gap that includes the confirmation time (`truckGapConfirm`; it costs 5–8 % of capacity at 10 % trucks and 7–12 % at 20 %);
   - repeat with the car's own sensor switched on, which these tests left out on purpose.
 - **Done when:** D9 and D10 state the confirmation time the truck rule needs, with its capacity cost.
+- **Note (2026-11-19, from 2.2 and 2.4):** the rule is tighter than it looked. Even at 0.5 s the gap covers the confirmation only through slack: harder car braking (10 m/s²), a faster control cycle, lower radio latency or a smaller margin each shrink the gap enough that lost-load collisions return (16–18 of 30 runs). And no road-only sensor reaches 99 % within 0.5 s at a sensible false-alarm rate, so for lost loads the cars' own sensors (shared) or the truck itself have to be the first witness. When the car sensors see the load and share it, there were no collisions even with a 2 s road confirmation. See the [report](reports/2-make-the-model-more-trustworthy.md).
 
 ### 1.6 A truck lane with its own admission rules (M) — new, from 1.2
 
@@ -93,12 +96,14 @@ These are ideas for what to do next, ordered by how much they could change the c
 - **Why:** the human baseline now matches handbook capacities, at their low end (about 5,400 veh/h on the corridor, where handbooks give 5,450–6,500). If a real road carries 6,000, the hybrid's capacity gain is zero. This is the largest remaining uncertainty in every comparison.
 - **Do:** take loop-detector data from one real three-lane motorway section with an on-ramp. Open sources include NDW (Netherlands), WebTRIS (England) and PeMS (California). Fit the speed-flow curve, the flow per lane, the capacity before breakdown and the discharge flow after it.
 - **Done when:** the baseline reproduces that section's speed-flow curve, and the comparison is re-run.
+- **Status (2026-11-19): partly done; no real data was fitted.** Published figures put a real three-lane merge at about 6,400 veh/h before breakdown and 5,700 after it; the model carries 5,300. Making today's drivers follow closer raises that only to about 5,900 at 1.0 s, with many collisions, because the human merge model limits it and has no capacity drop. Against a real road the hybrid's gain is therefore between about +5 % (after breakdown) and −7 % (before it); relative separation keeps +12–26 %. A script that fits a detector file is ready (`simulator/fit-detector.js`). See the [report](reports/2-make-the-model-more-trustworthy.md).
 
 ### 2.2 Sensitivity of the SDR assumptions (M)
 
 - **Why:** the SDR figures rest on assumed values: 8 m/s² braking, 0.2 s actuator delay, 0.1 s control cycle, 50 ms latency, 2.5 m margin, 120 m guardian range. Nobody has checked which of them the conclusions depend on.
 - **Do:** vary each one over a plausible range and record capacity and brick-wall collisions.
 - **Done when:** there is a table showing which assumptions move the result by more than 5 %, so those can be argued about first.
+- **Status (2026-11-19): done.** Actuator delay, control cycle, radio latency, the safety margin and harder braking move capacity by more than 5 % (a 0.5 s actuator delay or a 0.5 s control cycle puts the hybrid below today's road); the guardian range moves it not at all. Only weaker brakes (6 m/s²) made brick-wall stops worse outside the noise (41 collisions in 30 runs against 25). But every variant that tightens the gap (harder braking, faster control, lower latency, smaller margin) brought lost-load collisions back (16–20 of 30 runs): the truck gap covers the 0.5 s confirmation only through slack, which item 1.5 has to fix. See the [report](reports/2-make-the-model-more-trustworthy.md).
 
 ### 2.3 Realistic radio loss (M)
 
@@ -109,36 +114,54 @@ These are ideas for what to do next, ordered by how much they could change the c
   - sweep the tolerance (`lossTolerance`) to show the trade between capacity and full-force braking;
   - make a lane-change grant wait until the new follower has acknowledged it. Today the simulator does not, which is a known gap.
 - **Done when:** D6 can state a required delivery rate with its capacity cost.
+- **Status (2026-11-20): done.** How the losses come matters more than how many: 5 % random loss costs 6 % of capacity, the same loss in half-second bursts 24–70 %. Two paths with independent losses remove nearly all of it (1 % each: −1 %, within the noise), a common cause makes them no better than one, and sending twice over one path helps only against random loss. D6 now requires two independent paths that each deliver at least 99 %, with coverage planned so that no place loses both (a permanent dead spot stops traffic). A lane change now waits for the changer's and the new follower's acknowledgement (`laneChangeAck`, the new default); a fault in it that could jam a merge for good was found in the final run and fixed. No radio loss caused a collision. See the [report](reports/2-make-the-model-more-trustworthy.md).
 
 ### 2.4 Sensor false alarms and shared misses (M)
 
 - **Why:** detection is one probability and one delay. A false alarm costs capacity through needless stops. Cars missing the same object for the same reason (low, dark, at night) would make car sensors worth less than modelled.
 - **Do:** add a false-alarm rate per sensor and a shared-miss probability, then find the operating point.
 - **Done when:** D9 has a false-alarm budget next to its 1 s confirmation time.
+- **Status (2026-11-19): done.** At most 1 road false alarm per km per hour if a re-check clears it within 10 s, or 0.5 if it takes a minute, keeps the capacity cost below 1 %; false alarms caused no collision. A car's report must not close a lane on its own: reported car false targets are the largest cost (−3 % to −47 %). Shared misses do not make car sensors worth less as long as what they see is shared; they matter when the road misses the same objects. For a lost load the road alone is too slow at 1 s, as in item 1.5. A lane-change fault near a confirmed object was found and fixed on the way. See the [report](reports/2-make-the-model-more-trustworthy.md).
 
 ### 2.5 Check the pile-up on today's road (M)
 
 - **Why:** after a brick-wall stop, today's road had 33 collisions in 10 runs with impacts up to 102 km/h, against 5–8 for SDR. That result depends on one assumption: about 1.25 s of perception and reaction time for an unexpected event. It should not flatter SDR.
 - **Do:** compare the number of vehicles per pile-up with real multi-vehicle motorway crash records, and vary the surprise delay.
 - **Done when:** the pile-up size is within the range the records show, or the model is corrected.
+- **Status (2026-11-19): partly done.** The mean pile-up (2.4 vehicles at moderate traffic, 4.2 in dense traffic) is within the range of real multi-vehicle rear-end crashes, at its upper end, but pile-ups of five or more are too common, because the model's drivers never swerve. SDR has fewer collisions than today's road at every surprise delay tested (0.3–1.0 s), so the safety comparison does not rest on that assumption. The model is not corrected. See the [report](reports/2-make-the-model-more-trustworthy.md).
 
 ### 2.6 A policy for ice (S)
 
 - **Why:** on ice, relative separation keeps 85 km/h at close spacing, which SDR-04 calls a warning sign. The hybrid drops below today's road (3,580 against 3,960 veh/h).
 - **Do:** test a brick-wall stop on ice under each policy, and a weather rule such as a lower speed cap or wider gaps as grip falls.
 - **Done when:** there is a recommended ice rule with its capacity cost and its effect on impact speeds.
+- **Status (2026-11-19): done.** Recommended: the hybrid with a 60 km/h cap on ice. It carries 4,840 veh/h, 14 % more than today's road on ice (the hybrid without a cap carries 14 % less), and brick-wall impacts top out at 45 km/h instead of 69. Planning with less grip than measured costs half the capacity and is not worth it. With 20 % less grip than the road measured (black ice), SDR had no collisions in normal traffic. See the [report](reports/2-make-the-model-more-trustworthy.md).
 
 ### 2.7 More road layouts (M–L)
 
 - **Why:** every result comes from one 5 km corridor with one on-ramp and one exit.
 - **Do:** add a second on-ramp, a weaving section, a lane drop and a longer corridor. Check that the safety lane works where it is interrupted at junctions, and whether a sensor outage at a merge always costs about 17 %.
 - **Done when:** the headline figures are shown for at least three layouts.
+- **Status (2026-11-19): partly done.** Six layouts by parameter (2, 3 and 4 lanes, a short and a long acceleration lane, a 10 km corridor). The hybrid's gain comes from the merge: +26 % on two lanes, +11 % on three, +3 % on four. A sensor outage at the merge costs 34–36 % at saturation in every layout (the 17 % is at moderate demand). SDR had 69–77 % fewer brick-wall collisions in every layout. A second on-ramp, weaving, a lane drop and the safety lane at junctions need new road geometry and are still open. See the [report](reports/2-make-the-model-more-trustworthy.md).
 
 ### 2.8 Risk-model inputs from the lost-load research (S) — new
 
 - **Why:** the risk model assumes 120 lane-blocking objects per billion vehicle-km and that 70 % of falling loads come off trucks. A search for data during item 1.2 (sources in the [report](reports/1-questions-from-latest-results.md)) suggests about 140 objects per billion vehicle-km on England's network in 2023, and a truck share of 30–50 %: no road authority records which kind of vehicle an object came from, so the 70 % has no source. About half of what trucks shed is tyre and vehicle parts, which an enclosed body does not stop.
 - **Do:** replace the two inputs with ranges, show how far scenario C and D move, and say which input matters most.
 - **Done when:** the risk table in SDR-03 gives a range per scenario, with the sources for each input.
+- **Status (2026-11-19): done.** Each input has a low, central and high value with its source. The hybrid with SDR-grade sensing and load reporting rises from about 0.6 to about 3 collisions per billion vehicle-km (1.5–11), mostly because fewer lost loads come off trucks than assumed and half of what falls is tyres and parts. The ranking of the scenarios holds in all 64 combinations of inputs. See the [report](reports/2-make-the-model-more-trustworthy.md).
+
+### 2.9 Today's drivers: capacity drop and swerving (M) — new, from 2.1 and 2.5
+
+- **Why:** two gaps in the human driver model showed up in item 2. Real merges carry more before they break down than after (a capacity drop of 7–15 %); the model has no drop and breaks down at a lower flow than it then discharges. And real drivers swerve in an emergency (11 of 51 real shockwaves in one study had swerves); the model's drivers only brake, which makes pile-ups of five or more vehicles too common.
+- **Do:** give the human merge model a capacity drop (for example a shorter accepted gap before breakdown and a slower departure from the queue after it), and an emergency lane change into a free adjacent lane. Recalibrate against the figures collected in 2.1 and 2.5, and against detector data once 2.1 has some.
+- **Done when:** today's road shows a capacity before breakdown and a lower discharge, within the published ranges, and the share of pile-ups with five or more vehicles is within the records; the comparisons are re-run.
+
+### 2.10 Layouts that need new geometry (M–L) — new, from 2.7
+
+- **Why:** item 2.7 varied the corridor by its parameters only. A second on-ramp, a weaving section (an on-ramp shortly before an exit) and a lane drop need road geometry the simulator does not have; the safety lane where it is interrupted at junctions was not tested either.
+- **Do:** add several ramps per corridor and a lane drop to the engine, then run the headline comparison and a brick-wall stop on each; test a breakdown next to a junction where the safety lane ends.
+- **Done when:** the headline figures are shown for these layouts too, and the safety lane's behaviour at junctions is known.
 
 ---
 
@@ -148,8 +171,9 @@ These are ideas for what to do next, ordered by how much they could change the c
 - **3.2 Run the tests on GitHub (S).** A GitHub Actions workflow that runs `node --test simulator/test` on every push, so a broken engine is caught before results are regenerated.
 - **3.3 Split `engine.js` (M).** It is one file of about 1,300 lines holding the road, the SDR controllers, the vehicles and the human drivers. Separate files for the human model and the SDR control would make each easier to check. The browser must keep working without a build step.
 - **3.4 Make results traceable (S).** Write the git commit and the full parameter set into `results.json`, so every table can be reproduced exactly later.
-- **3.5 Same number of runs in every row of a table (S; costs run time).** Since item 1.4, rows that needed more runs have 15 where their neighbours have 5, so the same setup can show slightly different means in two tables (the hybrid at 7,200 + 900 veh/h: 6,038 from 5 runs, 5,978 from 15). Comparisons are made per seed and are not affected, and incident rows are already evened out. Doing the same for throughput rows roughly doubles the run time of the suite (now 70 minutes).
+- **3.5 Same number of runs in every row of a table (S; costs run time).** Since item 1.4, rows that needed more runs have 15 where their neighbours have 5, so the same setup can show slightly different means in two tables (the hybrid at 7,200 + 900 veh/h: 6,002 from 5 runs, 5,957 from 15). Comparisons are made per seed and are not affected, and incident rows are already evened out. Doing the same for throughput rows roughly doubles the run time of the suite (now about 5 hours).
 - **3.6 The merge looks one vehicle ahead (S–M).** An authority is set against the first vehicle ahead. When that vehicle pulls out and a truck is next, the longer gap applies at once. With a confirmation time in the truck gap the road already looks two vehicles ahead; the general rule (plan against every vehicle within stopping distance) is not built.
+- **3.7 A core set of experiments (S).** The full suite now has 25 groups and takes 5–6 hours, and every change to the core forces a full re-run. Split it: a core set (demand sweep, truck share, brick-wall stop, lost load; about 30 minutes) run after every change to the core, and an extended set (weather, radio, layouts, false alarms, sensitivity and the rest) run at milestones. `--core` and `--extended` flags, or a list in `experiments.js`; the report says which set each section came from. Added 2026-11-19.
 
 ---
 
@@ -159,7 +183,7 @@ These decide whether SDR is viable, and no amount of simulation settles them. Mo
 
 1. **Roadside sensing proof of concept.** Measure time-to-confirm and miss rate for pallet-, tyre- and deer-sized objects at 150 m, at night and in rain. The safety case needs 1 s; operating systems take 10–60 s. Still the decisive engineering question.
 2. **System-failure risk.** Software faults, cyberattack and common-cause failures: the half of the safety case the risk model does not cover. A structured hazard analysis would be the first step.
-3. **Economics with the new figures.** Cost per km for sensing, radio, fencing and the safety lane, against the benefits. With a capacity gain of about 12 % instead of 36 %, the case rests mainly on fewer crashes and reliable trip times, so those need to be valued.
+3. **Economics with the new figures.** Cost per km for sensing, radio, fencing and the safety lane, against the benefits. With a capacity gain of about 11 % at best instead of 36 % (and between +5 % and −7 % against a real merge), the case rests mainly on fewer crashes and reliable trip times, so those need to be valued.
 4. **Load monitoring (D10).** How reliably can a truck, trailer or roof carrier detect that a load is leaving? Item 1.2 depends on the answer, and now says what the answer is worth: if half the trucks can be trusted not to shed anything that stops a car, the hybrid keeps a capacity gain at 20 % trucks. What 1.2 found on the way (details and sources in the [report](reports/1-questions-from-latest-results.md)):
    - nobody measures it today: no study shows that any cargo-securing device reduces lost loads, and no road authority records which kind of vehicle an object came from;
    - an enclosed, rigid body with door sensing stops cargo from leaving, but about half of what trucks shed is tyres and vehicle parts, so "enclosed" alone is not enough to exempt a truck: tyre-pressure and wheel monitoring reported to the road has to be part of it;
@@ -208,9 +232,14 @@ Two factors added to the design principles after safety, efficiency and speed ([
 
 ## Suggested order
 
+Agreed on 2026-11-19: **settle the foundations first, then the factors.** The incident, weather and radio tests are what decided the separation policy, so they stay in the model; but until the foundations below are settled they are re-run at milestones only, not after every change.
+
 1. ~~Items 1.1, 1.3 and 1.4 together~~ and ~~item 1.2~~: worked through on 2026-11-19.
-2. Item 1.5: small, and it touches the safety case (the truck gap against a 1 s confirmation time).
-3. Items 3.1 and 3.2 alongside, so later changes stay safe.
-4. Item 2.1 as soon as detector data is at hand: it underlies every comparison.
-5. The rest of section 2 in any order, and section 4 in parallel where other people or hardware are needed.
-6. **Section 5 (environment and comfort)** can start at any time: it adds measurements and does not change how the road drives, except for a jerk limit if 5.3 finds one is needed. Item 5.1 first, since 5.2 builds on its energy model.
+2. ~~Section 2~~: worked through on 2026-11-19 and 20, except the parts that need real data (2.1) or new road geometry (2.10).
+3. **Foundations.** These decide whether the hybrid's capacity gain survives and whether its truck rule is safe:
+   - item 2.9, then item 2.1 as soon as detector data is at hand: today's road as a real merge (the baseline every comparison rests on);
+   - item 1.5: the confirmation time built into the gap behind trucks (section 2 showed it covers even 0.5 s only through slack).
+4. **Alongside, so the foundation work is fast and safe:** item 3.7 (a 30-minute core set of experiments for every core change) and item 3.2 (tests on GitHub); item 3.1 with them.
+5. **Then the factors again:** a full run of the extended set once the foundations are settled, and new factor work (2.10, 1.6, 3.6) after that.
+6. Section 4 in parallel throughout, where other people or hardware are needed.
+7. **Section 5 (environment and comfort)** can start at any time: it adds measurements and does not change how the road drives, except for a jerk limit if 5.3 finds one is needed. Item 5.1 first, since 5.2 builds on its energy model. Its tables belong in the extended set (3.7).

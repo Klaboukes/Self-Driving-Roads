@@ -66,6 +66,8 @@
     // road / environment
     speedLimit: 33.3,         // m/s (120 km/h)
     friction: 1.0,            // 1.0 dry, 0.7 wet, 0.3 ice
+    frictionActual: 0,        // grip the tyres really have, if it is less than the road measured (black ice); 0 = as measured
+    carBrake: 8.0,            // maximum braking of a car on a dry road (m/s²), certified and physical
 
     // SDR policy
     separation: 'hybrid',     // 'absolute' (brick-wall) | 'relative' | 'hybrid' (the recommended policy, decision D1)
@@ -80,6 +82,7 @@
     loadSlideDecel: 0,        //   the gap behind a truck assumes a lost load slides to rest at this rate (m/s²) instead of stopping dead (0 = stops dead)
     truckBehindTruckRelative: false, // a truck following a truck keeps a relative gap
     truckLane: false,         //   trucks keep to the right lane and cars use it only to get on and off the road
+    gripPlanShare: 1.0,       // SDR plans with this share of the measured grip (a weather rule: wider gaps and a lower speed as grip falls)
     sensorGapSpeed: 0,        // optional speed cap (m/s, 70 km/h) in and before a segment whose road sensors are down (hybrid; 0 = none)
     speedPolicy: 'fixed',     // 'fixed' | 'adaptive' (drop to capacity-optimal speed under pressure)
     controlPeriod: 0.1,       // segment controller cycle (s)
@@ -88,6 +91,19 @@
     authorityTTL: 1.5,        // authority expires this long after it was computed (s)
     lossAdaptive: true,       // the road measures radio loss and widens every vehicle's stale-authority allowance to match
     lossTolerance: 1e-4,      //   target chance per control cycle that a run of lost messages outlasts the allowance
+    lossBurstAware: false,    //   the road also measures how often a lost message follows a lost one, and sizes the allowance for runs of that
+                              //   kind (false: it assumes every message is lost independently)
+    // radio link model (roadmap 2.3). With these defaults every message is lost independently with probability packetLoss.
+    lossBurst: 0,             // mean length of a burst of lost messages (s), at the same long-run loss rate (two-state Gilbert–Elliott chain; 0 = independent)
+    radioPaths: 1,            // radio paths each authority is sent over (D6: two); it is lost only if it is lost on every path
+    lossCommon: 0,            //   share of each path's loss whose cause hits every path at once (same burst state: a truck shadowing both antennas). 0 = independent paths
+    repeatGap: 0,             // every authority is sent a second time this much later over the same path(s) (s; 0 = sent once)
+    outageX0: 0, outageX1: 0, // radio dead spot from x0 to x1 (m) where every message is lost (x1 <= x0: none) ...
+    outageT0: 0, outageT1: 1e9, //   ... from t0 to t1 (s)
+    outageAllPaths: true,     //   the dead spot hits every path (false: only the first)
+    laneChangeAck: true,      // a lane change starts only once the changer holds the instruction (with an authority that also keeps behind its
+                              //   new leader) and the new follower holds an authority that already keeps behind the changer
+                              //   (on since roadmap 2.3; false = the rule before, kept to show the difference)
     actuationDelay: 0.2,      // vehicle actuator delay (s)
     margin: 2.0,              // fixed safety margin (m)
     positionUncertainty: 0.5, // positioning error allowance (m)
@@ -101,6 +117,15 @@
     carSensorShare: 'road',   // what a vehicle does with a detection: 'none' (only brakes itself),
                               //   'road' (reports it to the segment controller), 'v2v' (also tells nearby vehicles directly)
     v2vLatency: 0.05,         // direct vehicle-to-vehicle message latency (s)
+    // false alarms and shared misses (roadmap 2.4); the defaults switch them off
+    roadFalseAlarmRate: 0,    // road sensors confirm an object that is not there: false alarms per km of road per hour (SDR)
+    carFalseAlarmRate: 0,     // a vehicle's own sensor sees a false target within its range: per vehicle-hour (both roads;
+                              //   today's road: driver-assistance braking). SDR reports it like a real detection (carSensorShare)
+    carFalseAlarmDur: 1.0,    //   how long the false target is seen (s); the vehicle brakes at full force while it is within stopping distance
+    falseAlarmClearTime: 60,  // the road clears an object that is not there after this re-check time (s)
+    sharedMissProb: 0,        // share of objects that are hard to see (low, dark, at night) for every car alike
+    sharedMissDetect: 0,      //   each car's chance to see such an object (instead of carDetectProb)
+    sharedMissRoadDetect: null, //   the road sensors' chance to see such an object (null: roadDetectProb, they are not affected)
 
     // safety lane (hard shoulder that the road uses to sidetrack faulty vehicles)
     safetyLane: false,
@@ -126,6 +151,8 @@
     commsLossDuration: 20,
     laneChangeDuration: 3.0,
     humanSightDebris: 150,    // distance at which a driver notices small debris (m)
+    humanT: 1.4,              // mean preferred time headway of human drivers (s); sets the capacity of today's road
+    humanSurprise: 0.7,       // mean extra perception time of a human driver for an unexpected event (s), on top of the reaction time
   };
 
   const TYPES = {
@@ -138,7 +165,7 @@
   const HUMAN = {
     Tmin: 0.6,        // shortest headway accepted right after a lane change (s)
     relaxTime: 20,    // time constant for relaxing back to the preferred headway (s)
-    T: 1.4,           // mean preferred time headway (s)
+    T: 1.4,           // mean preferred time headway (s); the engine uses DEFAULTS.humanT, so it can be changed per run
     bDisc: 1.5,       // braking an optional lane change may cause for the new follower or the changer (m/s²)
     bSafe: 3.0,       // same for a lane change the driver has to make (merging, reaching the exit); rises with urgency
     bSync: 1.5,       // braking a merging driver uses to line up with a gap (m/s²), +1.5 at the end of the lane
@@ -158,10 +185,10 @@
   // ---------------------------------------------------------------- theory
   // Steady-state lane capacity (veh/h) for SDR at speed v (m/s), cars only.
   function sdrGapTerms(cfg, separation, extraTau) {
-    const t = TYPES.car;
-    const bEff = Math.min(t.bMax, cfg.friction * G * 0.95);
+    const bMax = cfg.carBrake || TYPES.car.bMax;
+    const bEff = Math.min(bMax, cfg.friction * G * 0.95 * (cfg.gripPlanShare || 1));
     const bOwn = 0.9 * bEff;
-    const bLead = Math.min(1.1 * t.bMax, cfg.friction * G);
+    const bLead = Math.min(1.1 * bMax, cfg.friction * G);
     const cAbs = 1 / (2 * bOwn), cRel = 1 / (2 * bOwn) - 1 / (2 * bLead);
     // hybrid: share of followers that keep an absolute gap (platoon breaks, and vehicles behind trucks)
     const n = cfg.platoonBreakEvery || 0;
@@ -171,7 +198,7 @@
     const c = separation === 'relative' ? cRel
             : separation === 'hybrid' ? cRel + (cAbs - cRel) * breakShare + (cTruck - cRel) * truckShare
             : cAbs;
-    const fixed = t.length + cfg.margin + cfg.positionUncertainty + 2;          // + 2 m control buffer
+    const fixed = TYPES.car.length + cfg.margin + cfg.positionUncertainty + 2;          // + 2 m control buffer
     const tau = cfg.actuationDelay + cfg.controlPeriod + cfg.commsLatency + 0.1 + (extraTau || 0)  // reaction + stale-authority allowance
               + (separation === 'hybrid' ? truckShare * (cfg.truckGapConfirm || 0) : 0);
     return { c, fixed, tau };
@@ -187,7 +214,7 @@
   }
   function humanCapacity(cfg, v) {
     // IDM+ steady state: gap = s0 + v*T, mean T = HUMAN.T (longer in bad weather)
-    const T = HUMAN.T * (cfg.friction < 0.5 ? 1.4 : cfg.friction < 0.9 ? 1.15 : 1);
+    const T = (cfg.humanT || HUMAN.T) * (cfg.friction < 0.5 ? 1.4 : cfg.friction < 0.9 ? 1.15 : 1);
     return 3600 * v / (TYPES.car.length + 2 + v * T);
   }
 
@@ -205,6 +232,10 @@
       this.rampRng = mulberry32(c.seed + 101);
       this.rng = mulberry32(c.seed * 7919 + (c.mode === 'sdr' ? 1 : 2));
       this.faultRng = mulberry32(c.seed * 31 + 7);   // same in both worlds: who sees which object
+      this.faRng = mulberry32(c.seed * 7727 + 13);   // false alarms (only drawn from when they are switched on)
+      this.missRng = mulberry32(c.seed * 4111 + 29); // which objects are hard to see (only when sharedMissProb > 0)
+      this.nextRoadFA = null;
+      this.radioRng = mulberry32(c.seed * 6007 + 3); // radio link model (bursts, paths, dead spots), so that it leaves this.rng alone
       this.nextId = 1;
       this.vehicles = [];
       this.obstacles = [];
@@ -219,6 +250,8 @@
       this.occupancy = 0; this.occupancyBudget = Infinity;
       this.lossEst = 0;        // radio loss rate as measured by the road (share of authority messages not acknowledged)
       this.staleExtra = 0;     // extra stale-authority allowance (s) the road adds to every buffer because of it
+      this.lossStay = 0;       // measured chance that a message is lost when the one before it to the same vehicle was lost (bursts)
+      this._lossSent = 0; this._lossLost = 0; this._lossPrev = 0; this._lossBoth = 0;   // counts smoothed over ~60 s (lossStay, burst-aware allowance)
       this.segments = [];
       for (let s = 0; s * c.segmentLength < c.length; s++) {
         this.segments.push({ start: s * c.segmentLength, end: Math.min(c.length, (s + 1) * c.segmentLength), failed: false, sensorsDown: false });
@@ -231,6 +264,12 @@
         minSpare: Infinity, rampReleasesForced: 0, incidents: [], hardBrakeLog: [],
         sidetracked: 0, liveLaneStopS: 0, objectHits: 0,
         admits: [],              // one record per vehicle let in at a gate: time, how long it waited, which gate, vehicle type
+        roadFalseAlarms: 0, carFalseAlarms: 0, falseBrakes: 0,   // false alarms raised; vehicles braking for a false target
+        // radio (roadmap 2.3): vehicle-cycles whose authority was 3 or more messages old; lane changes the road started,
+        // how many times the changer or the new follower drove on, for longer than the normal latency, on an authority not
+        // computed for the change, the longest such time (s), and the least spare then against the changer or the new leader (m)
+        staleCycles: 0, laneChangesSdr: 0, lcExposed: 0, lcExposureMax: 0, lcMinSpare: Infinity,
+        radioSent: 0, radioLost: 0,   // authorities sent and lost (all paths and copies lost)
       };
       this._buildLanes();
     }
@@ -265,12 +304,12 @@
       return {
         id, type, origin, exits,
         secure: isTruck && c.secureLoadShare > 0 && mulberry32(c.seed * 9973 + id * 7919)() < c.secureLoadShare,   // enclosed, monitored load
-        length: T.length, aMax: T.aMax, bMax: T.bMax, bComfort: T.bComfort, vMaxType: T.vMax,
+        length: T.length, aMax: T.aMax, bMax: isTruck ? T.bMax : c.carBrake, bComfort: T.bComfort, vMaxType: T.vMax,
         hv0: isTruck ? clamp(24 + g1, 22, 25.5) : clamp(34.5 + 2 * g1, 29, 40),
-        hT: clamp(HUMAN.T + 0.25 * g2, HUMAN.T - 0.5, HUMAN.T + 0.8),
+        hT: clamp(c.humanT + 0.25 * g2, c.humanT - 0.5, c.humanT + 0.8),
         hTc: 0, hNoise: 0,                            // current (relaxing) headway; correlated acceleration noise
         hReact: clamp(0.55 + 0.1 * g3, 0.35, 0.8),
-        hSurprise: clamp(0.7 + 0.2 * g4, 0.4, 1.2),   // extra perception time for unexpected events
+        hSurprise: Math.max(0, clamp(0.7 + 0.2 * g4, 0.4, 1.2) + (c.humanSurprise - 0.7)),   // extra perception time for unexpected events
         tArrive: this.t, tEnter: null, xEnter: 0,
         x: 0, v: 0, a: 0, lane: 0, laneTo: null, lcT: 0, lcCooldown: 0, nextLaneEval: 0,
         buf: null, plan: null, inbox: [], mode: 'auto', commsDownUntil: -1, brakeFactor: 1, bfKnown: 1, bfDetectAt: Infinity,
@@ -283,8 +322,11 @@
 
     // ------------------------------------------------------------ physics helpers
     // braking the vehicle (and the road) *believes* it has; physics uses _bTrue
-    _bEff(v) { return Math.min(v.bMax * (v.bfKnown === undefined ? v.brakeFactor : v.bfKnown), this.cfg.friction * G * 0.95); }
-    _bTrue(v) { return Math.min(v.bMax * v.brakeFactor, this.cfg.friction * G * 0.95); }
+    _bEff(v) {
+      const c = this.cfg, plan = c.mode === 'sdr' ? c.gripPlanShare : 1;    // a weather rule of the road: plan with part of the grip
+      return Math.min(v.bMax * (v.bfKnown === undefined ? v.brakeFactor : v.bfKnown), c.friction * G * 0.95 * plan);
+    }
+    _bTrue(v) { const c = this.cfg; return Math.min(v.bMax * v.brakeFactor, (c.frictionActual > 0 ? c.frictionActual : c.friction) * G * 0.95); }
     _bOwn(v) { return 0.9 * this._bEff(v); }
     _bLead(o) { return Math.min(1.1 * o.bMax * (o.bfKnown === undefined ? o.brakeFactor : o.bfKnown), this.cfg.friction * G); }
     _isStatic(o) { return o.isObstacle || o.crashed || o.disabled || o.stalled; }
@@ -473,6 +515,8 @@
       this._spawn();
 
       const sdr = c.mode === 'sdr';
+      if (sdr && c.roadFalseAlarmRate > 0) this._roadFalseAlarms();
+      if (c.carFalseAlarmRate > 0) this._carFalseAlarms();
       if (sdr && this.t >= this.nextControl) {
         this._controlCycle();
         this.nextControl += c.controlPeriod;
@@ -485,6 +529,7 @@
         if (sdr) cmd = this._guardian(v, cmd);
         v.buf.push(cmd);
         v._cmd = v.buf.shift();
+        if (!sdr && v.falseTarget) this._falseBrakeHuman(v);
       }
 
       // integrate
@@ -700,36 +745,107 @@
         if (o.reported || !this.segments[this._segmentIndex(o.x)].sensorsDown) o.known = true;
       }
       this._updateSpeedPolicy();
-      for (const v of this.vehicles) v._soft = null;
+      for (const v of this.vehicles) { v._soft = null; v._yieldFor = null; v._lcWant = null; }
       for (const v of this.vehicles) {
         if (v.crashed || v.disabled || v.stalled || !this._segmentAlive(v.x) || this.t < v.commsDownUntil) continue;
         this._sdrLaneDecision(v);
       }
       this._virtualMerge();
       this._monitorBottleneck();
-      let sent = 0, lost = 0;
+      let sent = 0, lost = 0, prevLost = 0, both = 0;
+      const radio = this._radioModelOn();
       for (const v of this.vehicles) {
         if (v.crashed || v.disabled || v.stalled) continue;
         if (!this._segmentAlive(v.x)) continue;       // no controller → no authority
         const plan = this._computePlan(v);
         if (this.t < v.commsDownUntil) continue;      // message never arrives
         sent++;
-        if (this.rng() < c.packetLoss) { lost++; continue; }
-        v.inbox.push({ deliverAt: this.t + c.commsLatency, plan });
+        const u = this.rng();                         // drawn in every case, so the rest of the run sees the same random numbers
+        const delay = radio ? this._radioDeliver(v) : u < c.packetLoss ? -1 : 0;
+        // the road sees which authorities were acknowledged: runs of lost messages per vehicle
+        const run = v._lostRun || 0;
+        if (run > 0) { prevLost++; if (delay < 0) both++; }
+        v._lostRun = delay < 0 ? run + 1 : 0;
+        if (v._lostRun >= 3) this.m.staleCycles++;
+        if (delay < 0) { lost++; continue; }
+        v.inbox.push({ deliverAt: this.t + c.commsLatency + delay, plan });
       }
-      this._measureLoss(sent, lost);
+      this.m.radioSent += sent; this.m.radioLost += lost;
+      this._measureLoss(sent, lost, prevLost, both);
+    }
+
+    // ------------------------------------------------------------ SDR: radio link model (roadmap 2.3)
+    _radioModelOn() {
+      const c = this.cfg;
+      return c.lossBurst > 0 || c.radioPaths > 1 || c.lossCommon > 0 || c.repeatGap > 0 || c.outageX1 > c.outageX0;
+    }
+    // State of one two-state loss chain (Gilbert–Elliott, in continuous time) for vehicle v at time t: true = in a
+    // loss burst. `pi` is its long-run share of time in a burst, cfg.lossBurst the mean length of a burst (s).
+    // With lossBurst 0 every sample is independent. Chain 0 is the cause common to all paths, chain i path i.
+    _lossChain(v, i, pi, t) {
+      const R = v._radio || (v._radio = []);
+      let s = R[i];
+      if (!s) { s = R[i] = { bad: this.radioRng() < pi, t }; return s.bad; }
+      const B = this.cfg.lossBurst;
+      let pBad = pi;
+      if (B > 0 && pi < 1) {
+        const e = Math.exp(-(t - s.t) / (B * (1 - pi)));      // leaves a burst at rate 1/B, enters one at rate pi/((1 - pi)·B)
+        pBad = s.bad ? pi + (1 - pi) * e : pi * (1 - e);
+      }
+      s.bad = this.radioRng() < pBad; s.t = t;
+      return s.bad;
+    }
+    // Sends this cycle's authority to v over every path (and again after repeatGap if set). Returns the extra delay
+    // of the first copy that gets through (0 or repeatGap), or -1 if every copy is lost.
+    _radioDeliver(v) {
+      const c = this.cfg, p = c.packetLoss;
+      const pc = clamp(c.lossCommon || 0, 0, 1) * p;            // loss from the common cause
+      const pi = pc < 1 ? 1 - (1 - p) / (1 - pc) : 0;           // loss of each path on its own; together each path loses p
+      const n = Math.max(1, Math.round(c.radioPaths));
+      const dead = c.outageX1 > c.outageX0 && this.t >= c.outageT0 && this.t < c.outageT1 && v.x >= c.outageX0 && v.x < c.outageX1;
+      const copies = c.repeatGap > 0 ? [0, Math.min(c.repeatGap, 0.9 * c.controlPeriod)] : [0];
+      for (const d of copies) {
+        const t = this.t + d;
+        const common = pc > 0 ? this._lossChain(v, 0, pc, t) : false;
+        let ok = false;
+        for (let i = 1; i <= n; i++) {
+          const lostHere = (pi > 0 ? this._lossChain(v, i, pi, t) : false) || common || (dead && (c.outageAllPaths || i === 1));
+          if (!lostHere) ok = true;
+        }
+        if (ok) return d;
+      }
+      return -1;
     }
 
     // The road sees which authorities were acknowledged, so it knows the radio loss rate. It sizes the
     // stale-authority allowance so that a run of lost messages long enough to outlast it is rare
     // (lossTolerance per cycle): radio loss then costs capacity instead of causing full-force braking.
     // About two cycles of slack are already in every buffer.
-    _measureLoss(sent, lost) {
+    // With independent loss a run of k lost messages has the chance p^k. In bursts a lost message is followed by
+    // another one more often (lossStay = q > p), and a run of k has the chance p·q^(k-1); with lossBurstAware the
+    // road sizes the allowance for that (for independent loss the two are the same).
+    _measureLoss(sent, lost, prevLost, both) {
       const c = this.cfg;
       if (sent) this.lossEst += 0.02 * (lost / sent - this.lossEst);      // ~5 s smoothing
+      // The burst-aware estimate rests on rare events (runs of lost messages), so it uses counts smoothed over about
+      // 60 s; with 5 s every rare burst made the allowance jump and the gaps open with hard braking.
+      if (sent) {
+        const ws = Math.min(1, c.controlPeriod / 60);
+        this._lossSent += ws * (sent - this._lossSent); this._lossLost += ws * (lost - this._lossLost);
+        this._lossPrev += ws * ((prevLost || 0) - this._lossPrev); this._lossBoth += ws * ((both || 0) - this._lossBoth);
+      }
+      this.lossStay = this._lossPrev > 0 ? this._lossBoth / this._lossPrev : 0;
       const p = this.lossEst;
-      this.staleExtra = c.lossAdaptive && p > 0.002
-        ? Math.min(3, c.controlPeriod * Math.max(0, Math.log(c.lossTolerance) / Math.log(Math.min(p, 0.99)) - 2))
+      let k = Math.log(c.lossTolerance) / Math.log(Math.min(p, 0.99));
+      let on = p > 0.002;
+      if (c.lossBurstAware) {
+        // (no lower limit on the loss rate needed here: below the tolerance it gives no allowance by itself)
+        const ps = this._lossSent > 0 ? this._lossLost / this._lossSent : 0;
+        on = ps > 0;
+        if (on) k = 1 + Math.log(c.lossTolerance / ps) / Math.log(clamp(Math.max(ps, this.lossStay), 1e-6, 0.99));
+      }
+      this.staleExtra = c.lossAdaptive && on
+        ? Math.min(3, c.controlPeriod * Math.max(0, k - 2))
         : 0;
     }
 
@@ -752,6 +868,18 @@
       for (const L of this._lanesOf(v)) {
         const o = this._ahead(L, v.x, v, true);
         if (o && !(o.isWall && v.laneTo !== null)) { const k = this._eoaBehind(o, v); hard.push(k); if (k.e < e) { e = k.e; r = k.r; lv = k.lv; conf = k.conf || 0; } }
+      }
+      // laneChangeAck: a vehicle that wants to change into this vehicle's lane, just ahead of it, is waiting for this
+      // vehicle to acknowledge an authority that already keeps behind it
+      const y = v._yieldFor;
+      if (y) { const k = this._eoaBehind(y, v); hard.push(k); if (k.e < e) { e = k.e; r = k.r; lv = k.lv; conf = k.conf || 0; } }
+      // ... and a vehicle about to change lanes gets the instruction with an authority that also keeps behind the
+      // leader in the lane it is going to. Only while the change is still possible: another vehicle may have moved
+      // into that lane alongside it in this cycle, and an authority behind that one could not be kept.
+      const W = v._lcWant !== null && v._lcWant !== undefined && this._sdrLaneChangeFeasible(v, v._lcWant) ? v._lcWant : null;
+      if (W !== null) {
+        const o = this._ahead(W, v.x, v, true);
+        if (o && !o.isWall) { const k = this._eoaBehind(o, v); hard.push(k); if (k.e < e) { e = k.e; r = k.r; lv = k.lv; conf = k.conf || 0; } }
       }
       const fb = this._failedBoundaryAhead(v.x);
       if (fb !== null) {
@@ -779,7 +907,7 @@
         }
       }
       return { tMeas: this.t, eoa: e, rate: r, leadV: lv, softEoa: se, softRate: sr, softLeadV: slv, vLimit: this._vLimit(v),
-        allow: this.staleExtra + conf, softAllow: this.staleExtra + sconf };
+        allow: this.staleExtra + conf, softAllow: this.staleExtra + sconf, yieldId: y ? y.id : 0, lcTo: W };
     }
 
     _rampNear(x, range) {
@@ -916,8 +1044,50 @@
       // don't move into a lane that is blocked just ahead (unless the current lane is blocked too)
       if (!v.sidetrack && want >= 0 && want < c.lanes && isFinite(this._blockedDist(want, v.x, c.laneCloseDist, true)) &&
           !isFinite(this._blockedDist(v.lane, v.x, c.laneCloseDist, true))) return;
-      if (this._sdrLaneChangeFeasible(v, want)) { this._startLaneChange(v, want); return; }
+      if (this._sdrLaneChangeFeasible(v, want)) { if (!c.laneChangeAck || this._laneChangeAcked(v, want)) this._sdrStartLaneChange(v, want); return; }
       if (mandatory) this._requestMerge(v, want);
+    }
+
+    // laneChangeAck: do the changer and the new follower both hold an authority computed for the change (the changer:
+    // the instruction, with an authority that also keeps behind its new leader; the follower: one that keeps behind
+    // the changer)? If not, their next authorities will be (the road sees acknowledgements one control cycle later,
+    // so the change starts a cycle later at best)
+    // Both requests are renewed every cycle while the change is pending: renewing only the one that is missing lets
+    // the two fall out of step (one cycle the changer holds its instruction, the next the follower its yield) and
+    // the change never starts (a gridlock at the end of the acceleration lane, found in roadmap 2.3)
+    _laneChangeAcked(v, L) {
+      const ok = !!(v.plan && v.plan.lcTo === L);
+      v._lcWant = L;
+      const fol = this._behind(L, v.x, v, true);
+      if (!fol || fol.isObstacle || this._isStatic(fol) || !fol.buf) return ok;
+      if (!fol._yieldFor) fol._yieldFor = v;
+      return ok && !!(fol.plan && fol.plan.yieldId === v.id);
+    }
+
+    // a lane change the road grants. Records whether the changer or the new follower is left driving on an authority
+    // that was not computed for the change (each gets one with the next message that arrives)
+    _sdrStartLaneChange(v, L) {
+      this.m.laneChangesSdr++;
+      const fol = this._behind(L, v.x, v, true);
+      if (fol && !fol.isObstacle && !this._isStatic(fol) && fol.buf && !(fol.plan && fol.plan.yieldId === v.id)) fol._lcExp = { by: v, t0: this.t, L };
+      if (!(v.plan && v.plan.lcTo === L)) v._lcExp = { by: null, t0: this.t, L };
+      this._startLaneChange(v, L);
+    }
+    // While a vehicle is exposed: its true spare against the changer (follower) or against the leader in the target
+    // lane (changer), until an authority computed after the change arrives
+    _trackLaneChangeExposure(f, bE) {
+      const x = f._lcExp, p = f.plan;
+      if ((p && p.tMeas >= x.t0) || (x.by && (x.by.gone || x.by.crashed || !this._lanesOf(x.by).includes(x.L))) || !this._lanesOf(f).includes(x.L)) {
+        const d = this.t - x.t0;
+        if (d > 1.5 * this.cfg.commsLatency + 1e-9) this.m.lcExposed++;
+        if (d > this.m.lcExposureMax) this.m.lcExposureMax = d;
+        f._lcExp = null;
+        return;
+      }
+      const o = x.by || this._ahead(x.L, f.x, f, true);
+      if (!o || o.isWall) return;
+      const spare = this._eoaBehind(o, f).e - this._stopCommitted(f, bE);
+      if (spare < this.m.lcMinSpare) this.m.lcMinSpare = spare;
     }
 
     _sdrLaneChangeFeasible(v, L) {
@@ -932,7 +1102,14 @@
         const k = this._eoaBehind(lead, v);
         if (k.e - this._stopPoint(v, this._bOwn(v)) < c.laneChangeBufFactor * this._buffer(v.v, this.staleExtra + (k.conf || 0))) return false;
       }
-      const fol = this._behind(L, v.x, v, true);
+      let fol = this._behind(L, v.x, v, true);
+      if (fol && fol.isObstacle && !fol.isWall) {
+        if (fol.x >= v.x - v.length) return false;                   // the object is still beside the vehicle
+        // A vehicle that can no longer stop before a confirmed object comes through it if nothing is there (a false
+        // alarm) or if it drives over it, so it is the follower that counts, not the object.
+        const f2 = this._behind(L, fol.x - 1e-6, v, true);
+        if (f2 && !f2.isObstacle && !this._isStatic(f2) && this._stopPoint(f2, this._bEff(f2)) > fol.x - fol.length - c.margin) fol = f2;
+      }
       if (fol) {
         if (fol.x >= v.x - v.length) return false;
         if (!fol.isObstacle && !this._isStatic(fol)) {
@@ -977,6 +1154,7 @@
       while (v.inbox.length && v.inbox[0].deliverAt <= t) v.plan = v.inbox.shift().plan;
       const p = v.plan;
       const bE = this._bEff(v), bO = 0.9 * bE;
+      if (v._lcExp) this._trackLaneChangeExposure(v, bE);
       const fresh = p && t - p.tMeas <= c.authorityTTL;
       if (!fresh) {
         // authority expired: run the pre-cleared safe stop (stop before the last EoA)
@@ -1038,7 +1216,9 @@
       const bE = this._bEff(v);
       const own = v.x + v.v * c.actuationDelay + v.v * v.v / (2 * bE);
       for (const L of this._lanesOf(v)) {
-        const o = this._ahead(L, v.x, v, false);
+        let o = this._ahead(L, v.x, v, false);
+        // a false alarm is not there for the vehicle's own sensor; only a V2V message about it makes the guardian brake
+        while (o && o.phantom && !(o.v2vAt !== undefined && this.t >= o.v2vAt)) o = this._ahead(L, o.x, v, false);
         if (!o || o.isWall) continue;
         const rear = o.x - o.length;
         if (rear - v.x > c.guardianRange) continue;
@@ -1049,6 +1229,7 @@
         const objStop = (this._isStatic(o) || o.v < 0.5) ? rear : rear + o.v * o.v / (2 * this._bLead(o));
         if (own > objStop - 0.5) trigger = true;
       }
+      if (v.falseTarget && this._falseTargetBrakes(v, own)) trigger = true;
       if (trigger) {
         if (!v.guardianOn) { this.m.guardian++; v.guardianOn = true; }
         return -bE;
@@ -1062,7 +1243,7 @@
       if (o.v2vAt !== undefined && this.t >= o.v2vAt) return true;
       if (!o.seen) o.seen = new Map();
       let r = o.seen.get(v.id);
-      if (r === undefined) { r = this.faultRng() < this.cfg.carDetectProb; o.seen.set(v.id, r); }
+      if (r === undefined) { r = this.faultRng() < (o.hard ? this.cfg.sharedMissDetect : this.cfg.carDetectProb); o.seen.set(v.id, r); }
       return r;
     }
     _reportObject(o) {
@@ -1073,6 +1254,87 @@
       if (c.carSensorShare === 'v2v') o.v2vAt = this.t + c.v2vLatency;
     }
     _onFault(v) { v.sidetrack = true; }
+
+    // ------------------------------------------------------------ false alarms (roadmap 2.4)
+    // A false alarm of the road sensors: an object the road treats as confirmed where nothing is. The road closes
+    // the lane and gives authorities short of it, as for real debris, until a re-check clears it. Nobody can hit it.
+    falseAlarm(x, lane) {
+      const c = this.cfg;
+      const o = { isObstacle: true, phantom: true, x: x + 1, length: 1, lane, v: 0, a: 0, slide: 0, known: true, roadSees: true,
+        detectAt: this.t, clearAt: this.t + c.falseAlarmClearTime };
+      this.obstacles.push(o);
+      this._insert(lane, o);
+      this.m.roadFalseAlarms++;
+      return o;
+    }
+    // a road false alarm at a random place in a running lane, between x0 and x1, where no vehicle is
+    // (a detection on a vehicle the road already knows is that vehicle)
+    randomFalseAlarm(x0, x1) {
+      const c = this.cfg, r = this.faRng;
+      const lo = x0 === undefined ? 100 : x0, hi = x1 === undefined ? c.length - 100 : x1;
+      for (let k = 0; k < 20; k++) {
+        const x = lo + (hi - lo) * r(), lane = Math.min(c.lanes - 1, Math.floor(r() * c.lanes));
+        let free = true;
+        for (const v of this.lists[lane + 1]) if (!v.isObstacle && v.x > x - 2 && v.x - v.length < x + 3) { free = false; break; }
+        if (free) return this.falseAlarm(x, lane);
+      }
+      return null;
+    }
+    _roadFalseAlarms() {
+      const c = this.cfg, r = this.faRng;
+      const perS = c.roadFalseAlarmRate * c.length / 1000 / 3600;
+      if (this.nextRoadFA === null) this.nextRoadFA = this.t - Math.log(1 - r()) / perS;
+      while (this.t >= this.nextRoadFA) {
+        this.randomFalseAlarm();
+        this.nextRoadFA += -Math.log(1 - r()) / perS;
+      }
+    }
+    _carFalseAlarms() {
+      const c = this.cfg, r = this.faRng, n = this.vehicles.length;
+      const lam = c.carFalseAlarmRate / 3600 * c.dt * n;
+      let u = r(), p = Math.exp(-lam), s = p, k = 0;           // number of false targets in this step (Poisson)
+      while (u > s && k < 50) { k++; p *= lam / k; s += p; }
+      for (let i = 0; i < k; i++) {
+        const v = this.vehicles[Math.floor(r() * n)], u = r();
+        if (v.crashed || v.disabled || v.stalled) continue;
+        // the sensor sees only up to the first real object ahead, so the false target is in the free road before it
+        let o = this._ahead(v.lane, v.x, v, false);
+        while (o && o.phantom) o = this._ahead(v.lane, o.x, v, false);
+        const free = o && !o.isWall ? Math.max(0, o.x - o.length - v.x) : Infinity;
+        this.carFalseTarget(v, u * Math.min(c.guardianRange, free));
+      }
+    }
+    // Vehicle v's own sensor sees a false target d metres ahead in its lane for carFalseAlarmDur seconds, and brakes at
+    // full force while it is within stopping distance. In SDR the vehicle also reports it (carSensorShare), and the road
+    // treats the report like a real detection until a re-check clears it.
+    carFalseTarget(v, d) {
+      const c = this.cfg, x = v.x + d;
+      this.m.carFalseAlarms++;
+      v.falseTarget = { x, lane: v.lane, until: this.t + c.carFalseAlarmDur, braked: false };
+      if (c.mode !== 'sdr' || c.carSensorShare === 'none' || x >= c.length) return null;
+      const o = { isObstacle: true, phantom: true, x: x + 1, length: 1, lane: v.lane, v: 0, a: 0, slide: 0, known: false, roadSees: false,
+        reported: true, detectAt: this.t + c.commsLatency + c.controlPeriod, clearAt: this.t + c.falseAlarmClearTime };
+      if (c.carSensorShare === 'v2v') o.v2vAt = this.t + c.v2vLatency;
+      this.obstacles.push(o);
+      this._insert(v.lane, o);
+      return o;
+    }
+    // does vehicle v brake for its false target? (`own`: where it would stop with full braking)
+    _falseTargetBrakes(v, own) {
+      const ft = v.falseTarget;
+      if (this.t >= ft.until || ft.x <= v.x) { v.falseTarget = null; return false; }
+      if (!this._lanesOf(v).includes(ft.lane) || own <= ft.x - 0.5) return false;
+      if (!ft.braked) { ft.braked = true; this.m.falseBrakes++; }
+      return true;
+    }
+    // Today's road: driver assistance (automatic emergency braking) brakes for the false target after the actuator
+    // delay, without waiting for the driver; the driver's own commands are still in the pipeline after it.
+    _falseBrakeHuman(v) {
+      const c = this.cfg, bE = this._bEff(v);
+      if (!this._falseTargetBrakes(v, v.x + v.v * c.actuationDelay + v.v * v.v / (2 * bE))) return;
+      const k = Math.min(v.buf.length - 1, Math.max(0, Math.round(c.actuationDelay / c.dt) - 1));
+      v.buf[k] = Math.min(v.buf[k], -bE);
+    }
 
     // ------------------------------------------------------------ human baseline
     _humanSpeedFactor() { const f = this.cfg.friction; return f < 0.5 ? 0.65 : f < 0.9 ? 0.9 : 1; }
@@ -1272,7 +1534,9 @@
 
     // ------------------------------------------------------------ collisions & removals
     _collisions() {
-      for (const list of this.lists) {
+      const phantoms = this.obstacles.some(o => o.phantom);         // false alarms: nothing there to hit
+      for (const all of this.lists) {
+        const list = phantoms ? all.filter(o => !o.phantom) : all;
         for (let i = 0; i < list.length - 1; i++) {
           const a = list[i], b = list[i + 1];
           if (a === b) continue;
@@ -1338,11 +1602,14 @@
     // v0, slide: the object is moving at v0 (m/s) when it lands and slides to rest at `slide` m/s² (default: it lies still)
     addDebris(x, lane, v0, slide) {
       const c = this.cfg;
-      const roadSees = this.faultRng() < c.roadDetectProb;
+      // hard to see (low, dark, at night): every car's sensor (and optionally the road's) is worse at it alike
+      const hard = c.sharedMissProb > 0 && this.missRng() < c.sharedMissProb;
+      const roadSees = this.faultRng() < (hard && c.sharedMissRoadDetect !== null ? c.sharedMissRoadDetect : c.roadDetectProb);
       const o = {
         isObstacle: true, x: x + 1, length: 1, lane, v: slide > 0 ? (v0 || 0) : 0, a: 0, slide: slide || 0, known: false, roadSees,
         detectAt: roadSees ? this.t + c.roadDetectionDelay : Infinity, clearAt: this.t + c.incidentClearTime,
       };
+      if (hard) o.hard = true;
       this.obstacles.push(o);
       return o;
     }
@@ -1449,7 +1716,7 @@
         vLimit: this.vLimit,
         rampForced: m.rampReleasesForced,
         occupancy: this.occupancy, occupancyBudget: this.occupancyBudget,
-        lossEst: this.lossEst, staleExtra: this.staleExtra,
+        lossEst: this.lossEst, staleExtra: this.staleExtra, lossStay: this.lossStay,
       };
     }
   }

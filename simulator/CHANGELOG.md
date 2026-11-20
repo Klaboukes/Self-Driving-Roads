@@ -4,6 +4,63 @@ What was built, what went wrong and how it was fixed. Many fixes are design less
 
 ---
 
+## 2026-11-20 (roadmap 2): sensitivity, ice, pile-ups, break-even, layouts, false alarms, radio, risk inputs (→ [report](../reports/2-make-the-model-more-trustworthy.md))
+
+Roadmap section 2: how far the figures can be trusted. New parameters and seven new experiment groups; two faults in the SDR lane change were found and fixed on the way. The engine's default behaviour changed (a lane change next to a confirmed object, and every SDR lane change now waits for an acknowledgement), so every number was re-run.
+
+### Fixed: SDR
+- **A lane change next to a confirmed object let a vehicle in front of one that could not stop.** The road treated a confirmed object as a wall: the vehicle behind it was not counted as the follower for a lane change into that lane. With a false alarm 20 m ahead of a car at 110 km/h, the road let a slow vehicle change lanes just past the "object"; the car drove through the empty spot and hit it. The same holds for a real object that a vehicle drives over.
+  - Fix: a vehicle that can no longer stop before a confirmed object counts as the follower for such a lane change. The object itself must still be clear of the changing vehicle's body; a first version forgot that and caused one new lost-load collision, which a test now covers.
+  - **Lesson:** an object the road believes in is not a wall that protects what lies beyond it. Whoever cannot stop before it will arrive past it, so plans beyond it must still allow for them.
+- **The lane-change acknowledgement could stall a merge for ever.** It was found in the final run of this item, after the acknowledgement had been made the default. A lane change waits until the changer holds its instruction and the new follower holds an authority that keeps behind the changer. Each control cycle the road asked again only for the one that was missing. When one was in place and the other was not, they swapped every cycle and were never in place together. The ramp vehicle stopped at the end of the acceleration lane, the right lane stopped behind it, and nothing moved again: in 1 of 15 runs at 3,600 + 600 veh/h (relative separation), and in 2 of 5 at saturation with a 0.5 s control cycle.
+  - Fix: both are asked for again every cycle while the change waits. A test covers each combination.
+  - **Lesson:** a handshake between two parties needs both halves renewed together; renewing only what is missing can make them alternate for ever. A rule that waits for an acknowledgement has to be tested for stalls, not only for the safety it adds.
+
+### Added
+- **Parameters, all leaving earlier results unchanged:** `carBrake` (a car's maximum braking, was fixed at 8 m/s²), `humanT` and `humanSurprise` (mean headway and surprise delay of today's drivers, were constants), `gripPlanShare` (SDR plans with a share of the measured grip, a weather rule), `frictionActual` (the tyres have less grip than the road measured: black ice). The per-vehicle draws are shifted, not redrawn, so the same seed gives the same drivers.
+- **False alarms and shared misses** (by a sub-agent in its own worktree): `roadFalseAlarmRate`, `falseAlarmClearTime`, `carFalseAlarmRate`, `carFalseAlarmDur`, `sharedMissProb`, `sharedMissDetect`, `sharedMissRoadDetect`. A road false alarm closes a lane like real debris until a re-check clears it, and nobody can hit it. A car's false target makes the car brake; SDR reports it to the road, and today's road gets the same rate as driver-assistance braking so the comparison stays honest. New random streams, drawn from only when the features are on.
+- **Radio link** (by a sub-agent in its own worktree, then merged):
+  - `lossBurst`: loss in bursts, as a two-state chain per vehicle and path, at the same long-run rate;
+  - `radioPaths` and `lossCommon`: two paths, with a share of loss common to both;
+  - `repeatGap`: every authority sent twice;
+  - `outageX0`–`outageT1`: a dead spot;
+  - `lossBurstAware`: the road also measures bursts and sizes the gaps for them;
+  - `laneChangeAck`, on by default: a lane change starts only once the changer holds its instruction and the new follower holds an authority that keeps behind the changer.
+
+  The radio model has its own random stream, so it leaves the traffic alone.
+- **Groups** `sensitivity`, `ice`, `pileup`, `calibration`, `layouts` (results sections 15–19), `false-alarms` (section 20) and `radio` (section 9a). Incident runs now also record how many vehicles were involved and the speed of every impact.
+- **`fit-detector.js`:** fits capacity before breakdown, discharge flow, capacity drop and the speed-flow curve to a loop-detector CSV, and samples today's road in the same format (`--sim`). No real data was fitted yet.
+- **`--report`** rewrites `results.md` from `results.json`, so report changes need no new run.
+- **Risk model:** every input has a low, central and high value with its source (`risk-model.js`).
+
+### What it showed
+- **Five SDR assumptions move capacity by more than 5 %:**
+  - actuator delay: 0.5 s gives −19 %, below today's road;
+  - control cycle: 0.5 s gives −21 %, below today's road;
+  - radio latency: 200 ms gives −9 %;
+  - the margin: 5.5 m gives −8 %;
+  - braking: 10 m/s² gives +6 %, and 6 m/s² gives −4 %.
+
+  The guardian range changes nothing.
+- **The truck gap covers a 0.5 s confirmation only through slack.** Every change that tightens the gap (harder braking, a faster cycle, lower latency, a smaller margin) brought lost-load collisions back in 16–20 of 30 runs, at up to 12 km/h. **Lesson:** a gap that is safe "by the numbers" because several conservative assumptions happen to add up is not a rule. Put the confirmation time into the gap explicitly (roadmap 1.5), so making the system better elsewhere cannot make it less safe.
+- **Ice:** the hybrid with a 60 km/h cap carries 14 % more than today's road on ice and keeps brick-wall impacts at or below 45 km/h; planning with less grip halves capacity. Black ice (20 % less grip than measured) caused no SDR collision in normal traffic.
+- **Pile-ups on today's road** are as large as real ones on average, but five or more vehicles are too common, because the model's drivers cannot swerve. SDR's advantage holds at every surprise delay from 0.3 to 1.0 s.
+- **Today's road cannot be made to carry a real merge's capacity** by shortening headways: at 1.0 s it reaches about 5,900 veh/h with 71 collisions in 5 runs, and at 0.9 s it carries less. The human merge model is the limit, and it has no capacity drop. **Lesson:** calibrating one parameter to hit a capacity number can break the model elsewhere; check safety and the shape of the breakdown, not just the peak.
+- **Break-even:** against published capacities of a real three-lane merge (about 6,400 veh/h before breakdown, 5,700 after), the hybrid's gain is between about +5 % and −7 %.
+- **Layouts:** the hybrid's gain comes from the merge (+26 % on two lanes, +3 % on four); a sensor outage at the merge costs about a third of capacity at saturation in every layout.
+- **False alarms:** they cost 1 % of capacity at about 2.9 per km per hour with a 10 s re-check, or 0.55 with a one-minute re-check, and caused no collision. A car's report treated as confirmed is the largest cost (−3 % to −47 %). **Lesson:** a single witness may slow traffic down but must not close a lane; that needs the road's own confirmation.
+- **Radio: how the losses come matters more than how many.**
+  - At 5 % loss on one path, random loss costs 6 % of capacity. The same loss in 0.5 s bursts costs 24 %, with about 5,000 full-force brakes per run, or 70 % if the road widens the gaps for the bursts.
+  - Two paths with independent losses of 1 % each cost 1 % (within the noise), where one such path costs 62 %.
+  - A common cause makes two paths no better than one. Sending twice over one path helps only against random loss.
+  - A permanent 20 m dead spot stops all traffic; a second path that does not share it removes the cost.
+  - No collision in any radio row.
+
+  **Lesson:** specify a radio by the independence of its paths and the length of its bursts, not by an average loss rate.
+- **Lane changes need an acknowledgement.** Without it, lost messages left the changer or its new follower on an authority not computed for the change: up to 253 times per run. In bursts, the worst of them could not have stopped by 3 m. With it, this happened in no case, at no measurable capacity cost. **Lesson:** a change that involves two vehicles is safe only once both have received it; the road seeing its own message sent is not enough.
+
+---
+
 ## 2026-11-19 (roadmap 1): merge order, gate waits, speed, truck rules, paired statistics (→ [report](../reports/1-questions-from-latest-results.md))
 
 Roadmap section 1, the four questions the review left open. The engine's default behaviour changed (the merge and the ramp gate), so every number was re-run.
@@ -29,7 +86,7 @@ Roadmap section 1, the four questions the review left open. The engine's default
 
 ### Added
 - **Waits per gate** in every throughput row: median, 95th percentile and longest wait, for the main entry and the on-ramp, and how much traffic each gate let in. Vehicles still waiting at the end count with their wait so far.
-- **Paired statistics** (`pairedStat`, results section 15). Two rows are compared seed by seed, with a 95 % confidence interval on the difference, and each comparison is called outside or within the noise. A comparison within the noise gets more runs once (5 → 15 throughput runs, 10 → 30 incident runs).
+- **Paired statistics** (`pairedStat`, the last section of the results). Two rows are compared seed by seed, with a 95 % confidence interval on the difference, and each comparison is called outside or within the noise. A comparison within the noise gets more runs once (5 → 15 throughput runs, 10 → 30 incident runs).
   - **What went wrong:** "extend only what is within the noise" is lopsided. A comparison that looks significant after 10 runs is never checked again. The hybrid had 15 collisions in its first 10 brick-wall runs against 6 for relative separation ("outside the noise"), and 27 against 23 after 30. An incident row compared with a row that was extended now gets the same number of runs.
   - **Lesson:** decide the number of runs before looking, or extend both ways. Ten runs of a rare event are an anecdote.
 - **Group `gates`:** the merge and gate rules one change at a time, at three demands, each against today's road and against the rules as they were.
