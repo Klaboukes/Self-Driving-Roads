@@ -733,6 +733,31 @@ Chance of a collision per object (in %) combines the incident runs above: the ro
 
 Capacity cost of the false-alarm rates in the third column (saturated, cleared after 60 s): 0.1 per km per hour → 0.2 %, 1 per km per hour → 1.8 %, 10 per km per hour → 18.1 %. A collision chance of 0 means none in the runs above (10 runs resolve about 10 %, 30 runs about 3 %).
 
+## 20a. Per hazard, counted the same way
+
+*Full run of 2026-11-20 16:22: 5 runs per throughput row, 10 per incident row. Rows in a comparison that was within the noise were extended to 15 and 30 runs (last section).*
+
+Each hazard on today's road and on SDR, counted the same way: 4,200 + 600 veh/h, 10 % trucks, the same seeds on every road, the hazard at t = 10 min around x = 3 km, observed for 5 minutes. "Collisions caused" = collisions minus those in the same traffic without the hazard (in brackets). SDR sensing as designed: road sensors confirm an object after 0.5 s, and every car's own sensor sees it within range and reports it to the road. "No truck gap" is the hybrid without the long gap behind trucks: it follows trucks as relative separation does. "Loss reported at once": the same, but the road knows of the lost load with no delay, as if the truck reported it itself (load monitoring, D10). A lost load that slides slows at 6 m/s² instead of stopping dead. Vehicles involved = every vehicle in a collision after the hazard (the stopped or broken-down vehicle counts once something hits it), per event. An event is a run in which the hazard could be placed (a lost load needs a vehicle within 150 m behind a truck).
+
+| Hazard | System | Events | Events with a collision | Collisions caused (background) | Collisions caused per event | Vehicles involved per event: mean / events with 5+ | Impact speed, median (km/h) | Impacts above 30 km/h | Worst impact (km/h) | Mean gap of the follower (m) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| load falls off a truck, stops dead | Today (human drivers) | 30 | 28 | 150 (0) | 5.00 | 5.1 / 11 | 65 | 135 | 92 | 41 |
+| load falls off a truck, stops dead | SDR, no truck gap (relative behind trucks) | 30 | 30 | 72 (0) | 2.40 | 2.4 / 0 | 58 | 55 | 79 | 19 |
+| load falls off a truck, stops dead | SDR, hybrid (truck gap as it is) | 30 | 0 | 0 (0) | 0.00 | 0.0 / 0 | – | 0 | 0 | 62 |
+| load falls off a truck, stops dead | SDR, no truck gap, loss reported at once | 30 | 30 | 73 (0) | 2.43 | 2.4 / 0 | 58 | 56 | 79 | 19 |
+| load falls off a truck, slides at 6 m/s² | Today (human drivers) | 30 | 3 | 4 (0) | 0.13 | 0.2 / 0 | 15 | 0 | 26 | 41 |
+| load falls off a truck, slides at 6 m/s² | SDR, no truck gap (relative behind trucks) | 30 | 0 | 0 (0) | 0.00 | 0.0 / 0 | – | 0 | 0 | 19 |
+| load falls off a truck, slides at 6 m/s² | SDR, hybrid (truck gap as it is) | 30 | 0 | 0 (0) | 0.00 | 0.0 / 0 | – | 0 | 0 | 62 |
+| brick-wall stop | Today (human drivers) | 30 | 26 | 103 (0) | 3.43 | 4.3 / 11 | 63 | 89 | 110 | – |
+| brick-wall stop | SDR, no truck gap (relative behind trucks) | 30 | 19 | 28 (0) | 0.93 | 1.6 / 0 | 45 | 22 | 69 | – |
+| brick-wall stop | SDR, hybrid (truck gap as it is) | 30 | 15 | 16 (0) | 0.53 | 1.0 / 0 | 47 | 16 | 69 | – |
+| object 150 m ahead | Today (human drivers) | 30 | 3 | 5 (0) | 0.17 | 0.2 / 0 | 51 | 3 | 55 | 140 |
+| object 150 m ahead | SDR, no truck gap (relative behind trucks) | 30 | 0 | 0 (0) | 0.00 | 0.0 / 0 | – | 0 | 0 | 149 |
+| object 150 m ahead | SDR, hybrid (truck gap as it is) | 30 | 0 | 0 (0) | 0.00 | 0.0 / 0 | – | 0 | 0 | 152 |
+| breakdown | Today (human drivers) | 30 | 0 | 0 (0) | 0.00 | 0.0 / 0 | – | 0 | 0 | – |
+| breakdown | SDR, no truck gap (relative behind trucks) | 30 | 0 | 0 (0) | 0.00 | 0.0 / 0 | – | 0 | 0 | – |
+| breakdown | SDR, hybrid (truck gap as it is) | 30 | 0 | 0 (0) | 0.00 | 0.0 / 0 | – | 0 | 0 | – |
+
 ## 21. Which differences are real
 
 Both rows of a comparison were run with the same seeds, so they saw the same traffic. The difference is taken per seed and averaged; the interval is its 95 % confidence interval (Student's t). "Outside the noise" means the interval does not include zero. "Within the noise" means these runs cannot tell the two apart: the true difference is probably inside the interval, and may be zero. A comparison that was within the noise after the standard number of runs was extended once, to the number of runs shown, and is reported as it then stood. An incident row that is compared with a row extended in this way gets the same number of runs, so that collision counts are compared like against like. With this many comparisons, about one in twenty of those near the boundary will be on the wrong side by chance.
@@ -1637,6 +1662,45 @@ Both rows of a comparison were run with the same seeds, so they saw the same tra
 | load falls off a truck | Road misses; cars 90 % on average, shared misses, not shared | Road misses; each car 90 %, independently, not shared | Vehicles that hit the object | 30 | 0.83 | 0.87 | -0.03 (−4 %) | -0.10 to 0.03 | within the noise |
 | load falls off a truck | Road 95 % in 1 s, cars 90 %, road and cars miss the same objects (V2V) | Road 95 % in 1 s, cars 90 %, all misses independent (V2V) | Collisions per run | 30 | 0.10 | 0.13 | -0.03 (−25 %) | -0.22 to 0.15 | within the noise |
 | load falls off a truck | Road 95 % in 1 s, cars 90 %, road and cars miss the same objects (V2V) | Road 95 % in 1 s, cars 90 %, all misses independent (V2V) | Vehicles that hit the object | 30 | 0.03 | 0.13 | -0.10 (−75 %) | -0.21 to 0.01 | within the noise |
+
+### Per hazard, counted the same way (section 20a)
+
+| Conditions | A | B | Measure | Runs | A | B | Difference A − B | 95 % interval | Verdict |
+|---|---|---|---|---|---|---|---|---|---|
+| load falls off a truck, stops dead | SDR, no truck gap (relative behind trucks) | Today (human drivers) | Collisions caused per event | 30 | 2.40 | 5.00 | -2.60 (−52 %) | -4.30 to -0.90 | outside the noise |
+| load falls off a truck, stops dead | SDR, no truck gap (relative behind trucks) | Today (human drivers) | Impacts above 30 km/h per event | 30 | 1.83 | 4.50 | -2.67 (−59 %) | -4.29 to -1.04 | outside the noise |
+| load falls off a truck, stops dead | SDR, hybrid (truck gap as it is) | Today (human drivers) | Collisions caused per event | 30 | 0.00 | 5.00 | -5.00 (−100 %) | -6.62 to -3.38 | outside the noise |
+| load falls off a truck, stops dead | SDR, hybrid (truck gap as it is) | Today (human drivers) | Impacts above 30 km/h per event | 30 | 0.00 | 4.50 | -4.50 (−100 %) | -6.08 to -2.92 | outside the noise |
+| load falls off a truck, stops dead | SDR, hybrid (truck gap as it is) | SDR, no truck gap (relative behind trucks) | Collisions caused per event | 30 | 0.00 | 2.40 | -2.40 (−100 %) | -2.67 to -2.13 | outside the noise |
+| load falls off a truck, stops dead | SDR, hybrid (truck gap as it is) | SDR, no truck gap (relative behind trucks) | Impacts above 30 km/h per event | 30 | 0.00 | 1.83 | -1.83 (−100 %) | -2.05 to -1.61 | outside the noise |
+| load falls off a truck, stops dead | SDR, no truck gap, loss reported at once | Today (human drivers) | Collisions caused per event | 30 | 2.43 | 5.00 | -2.57 (−51 %) | -4.28 to -0.85 | outside the noise |
+| load falls off a truck, stops dead | SDR, no truck gap, loss reported at once | Today (human drivers) | Impacts above 30 km/h per event | 30 | 1.87 | 4.50 | -2.63 (−59 %) | -4.26 to -1.01 | outside the noise |
+| load falls off a truck, stops dead | SDR, no truck gap, loss reported at once | SDR, no truck gap (relative behind trucks) | Collisions caused per event | 30 | 2.43 | 2.40 | 0.03 (+1 %) | -0.09 to 0.15 | within the noise |
+| load falls off a truck, stops dead | SDR, no truck gap, loss reported at once | SDR, no truck gap (relative behind trucks) | Impacts above 30 km/h per event | 30 | 1.87 | 1.83 | 0.03 (+2 %) | -0.09 to 0.15 | within the noise |
+| load falls off a truck, slides at 6 m/s² | SDR, no truck gap (relative behind trucks) | Today (human drivers) | Collisions caused per event | 30 | 0.00 | 0.13 | -0.13 (−100 %) | -0.30 to 0.03 | within the noise |
+| load falls off a truck, slides at 6 m/s² | SDR, no truck gap (relative behind trucks) | Today (human drivers) | Impacts above 30 km/h per event | 30 | 0.00 | 0.00 | 0.00 | 0.00 to 0.00 | identical |
+| load falls off a truck, slides at 6 m/s² | SDR, hybrid (truck gap as it is) | Today (human drivers) | Collisions caused per event | 30 | 0.00 | 0.13 | -0.13 (−100 %) | -0.30 to 0.03 | within the noise |
+| load falls off a truck, slides at 6 m/s² | SDR, hybrid (truck gap as it is) | Today (human drivers) | Impacts above 30 km/h per event | 30 | 0.00 | 0.00 | 0.00 | 0.00 to 0.00 | identical |
+| load falls off a truck, slides at 6 m/s² | SDR, hybrid (truck gap as it is) | SDR, no truck gap (relative behind trucks) | Collisions caused per event | 30 | 0.00 | 0.00 | 0.00 | 0.00 to 0.00 | identical |
+| load falls off a truck, slides at 6 m/s² | SDR, hybrid (truck gap as it is) | SDR, no truck gap (relative behind trucks) | Impacts above 30 km/h per event | 30 | 0.00 | 0.00 | 0.00 | 0.00 to 0.00 | identical |
+| brick-wall stop | SDR, no truck gap (relative behind trucks) | Today (human drivers) | Collisions caused per event | 30 | 0.93 | 3.43 | -2.50 (−73 %) | -3.72 to -1.28 | outside the noise |
+| brick-wall stop | SDR, no truck gap (relative behind trucks) | Today (human drivers) | Impacts above 30 km/h per event | 30 | 0.73 | 2.97 | -2.23 (−75 %) | -3.28 to -1.19 | outside the noise |
+| brick-wall stop | SDR, hybrid (truck gap as it is) | Today (human drivers) | Collisions caused per event | 30 | 0.53 | 3.43 | -2.90 (−84 %) | -4.08 to -1.72 | outside the noise |
+| brick-wall stop | SDR, hybrid (truck gap as it is) | Today (human drivers) | Impacts above 30 km/h per event | 30 | 0.53 | 2.97 | -2.43 (−82 %) | -3.47 to -1.39 | outside the noise |
+| brick-wall stop | SDR, hybrid (truck gap as it is) | SDR, no truck gap (relative behind trucks) | Collisions caused per event | 30 | 0.53 | 0.93 | -0.40 (−43 %) | -0.75 to -0.05 | outside the noise |
+| brick-wall stop | SDR, hybrid (truck gap as it is) | SDR, no truck gap (relative behind trucks) | Impacts above 30 km/h per event | 30 | 0.53 | 0.73 | -0.20 (−27 %) | -0.52 to 0.12 | within the noise |
+| object 150 m ahead | SDR, no truck gap (relative behind trucks) | Today (human drivers) | Collisions caused per event | 30 | 0.00 | 0.17 | -0.17 (−100 %) | -0.39 to 0.05 | within the noise |
+| object 150 m ahead | SDR, no truck gap (relative behind trucks) | Today (human drivers) | Impacts above 30 km/h per event | 30 | 0.00 | 0.10 | -0.10 (−100 %) | -0.25 to 0.05 | within the noise |
+| object 150 m ahead | SDR, hybrid (truck gap as it is) | Today (human drivers) | Collisions caused per event | 30 | 0.00 | 0.17 | -0.17 (−100 %) | -0.39 to 0.05 | within the noise |
+| object 150 m ahead | SDR, hybrid (truck gap as it is) | Today (human drivers) | Impacts above 30 km/h per event | 30 | 0.00 | 0.10 | -0.10 (−100 %) | -0.25 to 0.05 | within the noise |
+| object 150 m ahead | SDR, hybrid (truck gap as it is) | SDR, no truck gap (relative behind trucks) | Collisions caused per event | 30 | 0.00 | 0.00 | 0.00 | 0.00 to 0.00 | identical |
+| object 150 m ahead | SDR, hybrid (truck gap as it is) | SDR, no truck gap (relative behind trucks) | Impacts above 30 km/h per event | 30 | 0.00 | 0.00 | 0.00 | 0.00 to 0.00 | identical |
+| breakdown | SDR, no truck gap (relative behind trucks) | Today (human drivers) | Collisions caused per event | 30 | 0.00 | 0.00 | 0.00 | 0.00 to 0.00 | identical |
+| breakdown | SDR, no truck gap (relative behind trucks) | Today (human drivers) | Impacts above 30 km/h per event | 30 | 0.00 | 0.00 | 0.00 | 0.00 to 0.00 | identical |
+| breakdown | SDR, hybrid (truck gap as it is) | Today (human drivers) | Collisions caused per event | 30 | 0.00 | 0.00 | 0.00 | 0.00 to 0.00 | identical |
+| breakdown | SDR, hybrid (truck gap as it is) | Today (human drivers) | Impacts above 30 km/h per event | 30 | 0.00 | 0.00 | 0.00 | 0.00 to 0.00 | identical |
+| breakdown | SDR, hybrid (truck gap as it is) | SDR, no truck gap (relative behind trucks) | Collisions caused per event | 30 | 0.00 | 0.00 | 0.00 | 0.00 to 0.00 | identical |
+| breakdown | SDR, hybrid (truck gap as it is) | SDR, no truck gap (relative behind trucks) | Impacts above 30 km/h per event | 30 | 0.00 | 0.00 | 0.00 | 0.00 to 0.00 | identical |
 
 ### Road-sensor outage (section 6)
 

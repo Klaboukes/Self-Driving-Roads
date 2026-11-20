@@ -4,6 +4,7 @@ Status: simulation results and desk research, for discussion · 2026-11-19
 **Figures updated (2026-11-19, review):** all simulation numbers below come from the re-run after the review: 10 runs per incident row and 5 per throughput row (was 6 and 2), and a today's road that now carries what a real motorway carries. The capacity comparison changed most: the hybrid is 9 % above today's road, not 36 %. See [SDR-04](SDR-04-Viability-Assessment.md) and the [changelog](simulator/CHANGELOG.md).
 **Figures updated again (2026-11-19, roadmap section 1):** a fault in the SDR merge was fixed and the whole suite re-run. The hybrid is now 12 % above today's road at 10 % trucks and 9 % below it at 20 %. Collision counts are from 10 runs, or from 30 where a comparison needed them; the text says which differences are within the noise. Cheaper truck rules were tested and are reported in [SDR-04](SDR-04-Viability-Assessment.md) and the [roadmap report](reports/1-questions-from-latest-results.md). New desk research on lost loads is in appendix A5.
 **Figures updated a third time (2026-11-20, roadmap section 2):** the whole suite was re-run with the final code. The lane-change acknowledgement is now on by default. The hybrid is 11 % above today's road at 10 % trucks. Section 2 added:
+**Truck rule changed (2026-11-20, roadmap 6.1):** SDR now uses the safety criterion "clearly safer than today overall, no worse per hazard" (SDR-01 §2). Under it the long gap behind trucks is dropped for the SDR-Ready fleet, whose trucks are all enclosed. The risk model in section 6 was recounted per hazard, with today's road on the same measure. Sections that describe the hybrid with the truck gap keep their figures as measured.
 - a range and a source for every input of the risk model;
 - a false-alarm budget for D9;
 - a radio requirement for D6;
@@ -196,31 +197,32 @@ The simulation answers "what happens if…". A risk model is needed for "how oft
 | Share of falling objects that are cargo, not tyres or parts | 40 % | 50 % | 70 % | About half and half in US and English data (A5). The high end assumes heavy objects are more often cargo. Before, the model treated everything as cargo. |
 | Share of tyre and part losses that the vehicle reports | 0 % | 0 % | 50 % | Assumption. Tyre-pressure monitoring might report some tyre failures; a US field test was inconclusive. |
 
-Detection performance is set per scenario. Collisions per event are from the simulation's brick-wall tests (10 runs per policy).
+Since roadmap item 6.1 (2026-11-20) the model also has two inputs for the SDR-Ready fleet, both assumptions: the share of cargo losses an enclosed body still lets out (2 %, **10 %**, 25 %), and the share of truck tyre and wheel losses reported beforehand as a fault (0 %, **30 %**, 60 %), after which the road gives that truck the long gap. Detection performance is set per scenario. Collisions per event come from the simulation, per hazard and counted the same way for SDR and today's road (30 runs each): 2.4 per lost load at a relative gap, 1.5–1.9 per brick-wall stop, and 5.0 per lost load on today's road.
 
-| Scenario | Collisions per billion veh-km | Range, researched inputs vary | Range, all inputs vary | Before these inputs |
+| Scenario | Collisions per billion veh-km | Range, researched inputs vary | Range, all inputs vary | Before item 6.1 |
 |---|---|---|---|---|
-| A. Relative separation, today's detection (≈10 s, nothing shared) | 22 | 19–65 | 9–136 | 19 |
-| B. Recommended hybrid, today's detection | 16 | 13–50 | 6.5–100 | 13 |
-| C. Recommended hybrid, SDR-grade detection (road ≤1 s/99 %, car 90 %, V2V) | 4.7 | 3.4–16 | 1.0–46 | 2.2 |
-| D. As C, plus vehicles report their own lost cargo (90 %) | **2.8** | 1.5–11 | 0.4–30 | 0.6 |
+| Today's road (human drivers, today's vehicles), same measure | 25 | 21–75 | 6–217 | new |
+| A. Relative separation, today's detection (≈10 s, nothing shared) | 26 | 22–77 | 10–165 | 22 |
+| B. Hybrid with truck gap, today's detection | 19 | 15–60 | 7.5–127 | 16 |
+| C. Hybrid with truck gap, SDR-grade detection (road ≤1 s/99 %, car 90 %, V2V) | 7.2 | 5.2–25 | 1.5–73 | 4.7 |
+| D. As C, plus vehicles report their own lost cargo (90 %) | 7.3 | 5.2–25 | 1.5–73 | 2.8 |
 | E. Absolute separation, SDR-grade detection | 0.3 | 0.26–0.9 | 0.1–2.3 | 0.3 |
-| *For scale: debris crashes today (US, all roads)* | *≈ 10* | | | |
+| F. Relative separation, SDR-grade detection, today's vehicles | 12 | 10–35 | 2.7–103 | new |
+| **G. No truck gap, SDR-grade detection, SDR-Ready fleet (recommended since 2026-11-20)** | **9.2** | 6.7–30 | 1.7–95 | new |
+| H. As G, with the truck gap | 7.3 | 5.2–25 | 1.5–73 | new |
+| *For scale: debris crashes today, recorded (US, all roads)* | *≈ 10* | | | |
 | *For scale: casualties on GB motorways, all causes* | *≈ 47* | | | |
 
 "Researched inputs" are the object rate, the truck share and the cargo share; the assumptions stay at their central values. In "all inputs vary" every input is at its best or at its worst at the same time, so that range is deliberately wide.
 
 How to read it:
 
-- **Treat the numbers as orders of magnitude.** Two inputs set the level and move every scenario by the same factor: the heavy share (an assumption; a factor of 4 across its range) and the object rate (a factor of 3.5, though its high end is a ceiling, not a likely value).
-- The **ranking holds** in every combination of low and high inputs (64 combinations), and it says three things:
-  1. **With today's detection, close following is not acceptable** (A and B are no better than human drivers for debris).
-  2. **Fast roadside sensing does most of the work** (B → C, about 3.5× fewer collisions; 2–7× across the inputs).
-  3. **Lost loads are what's left,** and load monitoring closes less of that gap than assumed before: C → D is 1.7× (1.4–4×), not 3.8×. About half of what falls off a vehicle is tyres and parts, which load monitoring does not see.
-- **Scenario D carries about 9 times absolute separation's object risk** (2.5–22× across the inputs), not about 2 times, while keeping about 1.8 times its capacity.
-- **What moved since the earlier version:** the truck share (70 % → 40 %) doubles C, because fewer falling loads come from trucks, so fewer land in the long gap behind one. The cargo share (everything → half) triples D. The object rate (120 → 141) raises every row by a sixth.
-- **Which input matters most for C and D, beyond the level:** the share of objects that land right in front of a follower, an assumption (a factor of 2.5 on C and 2.2 on D). Of the researched inputs, the truck share matters most for C (a factor of 1.35 within 30–50 %), and for D the cargo share and the share of tyre and part losses reported (about 1.6 each).
-- Scenarios C and D assume the road confirms a load falling off a truck fast enough for the gap behind it. In the simulation 0.5 s was fast enough and 1 s was not ([SDR-04](SDR-04-Viability-Assessment.md)). With 1 s, C rises to 5.0–7.5 and D to 2.9–4.3, depending on whether the follower's own sensor still catches the load.
+- **Treat the numbers as orders of magnitude.** Two inputs set the level and move every scenario, today's road included, by the same factor: the heavy share (an assumption; a factor of 4 across its range) and the object rate (a factor of 3.5, though its high end is a ceiling, not a likely value).
+- **Item 6.1 changed how lost loads are counted, and SDR looks worse for it.** At a relative gap a lost load causes 2.4 collisions in the simulation, not the 1.5 of a brick-wall stop, which raises C from 4.7 to 7.2. And a loss the vehicle reports itself no longer counts as harmless: with the road told at once, the follower about 19 m behind hit the load as often as without the report. So load monitoring as a warning adds nothing (D equals C). What it adds is the long gap behind a truck that reports a fault, and enclosed bodies that keep the load in.
+- **Per hazard, G is below today's road in every combination of inputs:** lying objects 0.38 of today, truck cargo 0.05, truck tyres and parts 0.34, losses from cars and vans 0.48, all objects 0.37. This is what the safety criterion in [SDR-01](SDR-01-Concept-Architecture.md) §2 asks for, and why D1 drops the gap behind trucks. Keeping the gap (H) lowers 9.2 to 7.3.
+- **The residual is cars and vans, not trucks.** About 7 of G's 9 collisions come from what falls off them; no truck rule covers those, and the hybrid with the truck gap has the same 7.
+- **The ranking of A–E holds** in every combination of inputs: with today's detection close following is no better than today's road; fast roadside sensing does most of the work (B → C, 2.6×; 1.8–5.2×).
+- **What could undo the comparison with today's road:** the simulated drivers brake but never swerve, so today's road may count too many collisions per lost load. SDR would lose its advantage on lost loads only if today's road had 63 % fewer than simulated. On the SDR side, what matters most for G beyond the level is the share of objects that land right in front of a follower (factor 2.6), then the truck share and the tyre and wheel warnings (1.2 each).
 - This covers objects only. It excludes system failures (software faults, cyberattack, correlated failures). Those need their own analysis and could dominate.
 
 ---
@@ -231,7 +233,7 @@ Proposed updates to [SDR-01](SDR-01-Concept-Architecture.md):
 
 | # | Decision | Proposal |
 |---|---|---|
-| D1 | Separation policy | **Hybrid:** relative by default; absolute behind load-carrying vehicles (trucks, trailers, roof loads), behind vehicles that report a fault, and in segments with degraded sensing. No platoon breaks. |
+| D1 | Separation policy | **Hybrid:** relative by default; absolute behind vehicles that report a fault and in segments with degraded sensing. No platoon breaks. ~~Absolute behind load-carrying vehicles~~: dropped on 2026-11-20 for the SDR-Ready fleet under the safety criterion "no worse than today per hazard" (SDR-01 §2, roadmap 6.1). |
 | D7 | Guardian sensor scope | Unchanged (forward only). Add: **every guardian detection is reported to the road**; the guardian's main value is as a first witness. |
 | D9 (new) | Roadside object detection | Overlapping radar/lidar/camera coverage with a **confirmation time of ≤1 s** for any lane-blocking object, ≥99 % detection, and at least two independent sensor types per point. Treat it as safety-critical (SIL-rated), like railway interlocking. False alarms: at most about 1 per km per hour if a re-check clears one within 10 s, 0.5 if it takes a minute (roadmap 2.4). A car's report of an object is checked by the road and does not close a lane on its own. |
 | D10 (new) | Load monitoring | Required for SDR-Ready trucks, trailers and roof/rear carriers: detect load loss and broadcast it immediately (road + V2V). |

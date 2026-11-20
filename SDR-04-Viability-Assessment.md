@@ -1,6 +1,6 @@
 # Self Driving Road (SDR): Viability and efficiency assessment
 
-Status: assessment, for discussion · 2026-11-19, revised the same day after a review of the simulator and after roadmap section 1, and on 2026-11-20 after roadmap section 2
+Status: assessment, for discussion · 2026-11-19, revised the same day after a review of the simulator and after roadmap section 1, and on 2026-11-20 after roadmap section 2 and item 6.1
 Based on: [SDR-01](SDR-01-Concept-Architecture.md) (architecture) and [SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md) (hybrid separation, detection layers, safety lane). It also replaces the first simulation report (SDR-02), which was retired when its figures were superseded.
 Data: [simulator/results/results.md](simulator/results/results.md)
 
@@ -30,6 +30,13 @@ This answers the question *"How viable and efficient is SDR, based on the simula
 - **The gap behind trucks covers the 0.5 s confirmation only through slack.** Make braking, control or latency better, and lost-load collisions come back.
 - **All figures were re-run with the final code,** in which the lane-change acknowledgement is on by default. Most moved by a few percent. The hybrid now carries 11 % more than today's road at 10 % trucks.
 
+**What changed in the fourth revision (roadmap item 6.1, [report](reports/6.1-which-safety-criterion.md)).**
+
+- **SDR now has a safety criterion** ([SDR-01](SDR-01-Concept-Architecture.md) §2): clearly safer than today overall, and no worse than today for any single kind of hazard. It replaces the implicit "safe against each foreseeable event".
+- **The long gap behind trucks is dropped,** since every SDR-Ready truck has an enclosed body and monitored tyres and wheels. Without the gap, SDR stays below today's road on every hazard compared, in the simulator and in the risk model. It carries 31 % more than the simulated today's road at 10 % trucks, 16 % more at 20 % and 3 % more at 30 % (the hybrid with the gap: +11 %, −9 %, −20 %).
+- **Both roads are now counted the same way, per hazard** (section 2).
+- **The risk model counted lost loads too kindly for SDR.** At a relative gap a lost load causes 2.4 collisions, not the 1.5 of a brick-wall stop. A loss the vehicle reports itself does not prevent the hit: the follower is too close to stop, whoever knows. The best SDR setup rises from about 3 to about 7 object collisions per billion vehicle-km. Today's road, on the same measure, comes out at about 25.
+
 **How to read the figures.** A throughput figure is the mean of 5 runs and an incident figure the result of 10 runs. Where a difference could not be told from noise, the rows were run 15 and 30 times. Every difference quoted below is outside the noise (its interval does not include zero) unless it says "within the noise". The intervals behind the main statements are in the appendix; all of them are in the last section of the results.
 
 ---
@@ -39,21 +46,20 @@ This answers the question *"How viable and efficient is SDR, based on the simula
 SDR is **clearly better in how traffic flows** and **modestly better in how much traffic the road carries**. It is **plausibly, but not yet provably, better on safety**.
 
 - **Flow quality is the strong result.** When demand exceeds what today's road can carry, today's road drops to about 60 km/h in stop-and-go traffic. The SDR road keeps moving at about 100 km/h and the excess waits at the entry. Hard braking falls by 94–100 %. Trip delay is lower at every demand.
-- **Capacity is a smaller gain than first reported. It depends on trucks, and it may not survive a real road.**
-  - With 10 % trucks, the recommended hybrid carries about 11 % more than the simulated today's road (the interval is 6–16 %).
-  - With no trucks it carries 29 % more.
-  - With 20 % trucks it carries 9 % less, and with 30 % trucks 20 % less, because the hybrid keeps a brick-wall gap behind every truck.
-  - A real three-lane merge carries more than the simulated one. Against it, the gain at 10 % trucks lies between about +5 % and −7 %.
-- **One way to limit that cost holds up, and it rests on load monitoring.** If trucks with an enclosed, monitored load need no long gap behind them, and at least half the trucks qualify, the hybrid carries more than today's road at 20 % trucks again. A gap sized to the confirmation time, trucks following trucks closely, a truck lane and a lower speed do not help.
+- **Capacity is a smaller gain than first reported, and it depends on the truck rule.**
+  - With the long gap behind every truck (the hybrid until 2026-11-20): about 11 % more than the simulated today's road at 10 % trucks (interval 6–16 %), 9 % less at 20 % and 20 % less at 30 %. Against a real three-lane merge: between about +5 % and −7 % at 10 % trucks.
+  - **Without it, as decided under the safety criterion (SDR-01 §2):** 31 % more at 10 % trucks (interval 23–39 %), 16 % more at 20 % and 3 % more at 30 %. Against a real merge: about +12 to +26 % at 10 % trucks.
+  - With no trucks: 29 % more.
+- **Dropping the truck gap is a trade, made openly.** SDR then has about 9 object collisions per billion vehicle-km instead of about 7, still well below today's road (about 25 on the same measure), and below it for every hazard. A gap sized to the confirmation time, trucks following trucks closely, a truck lane and a lower speed were tested earlier and do not help.
 - **Below today's capacity both roads carry all the traffic.** SDR does it with less delay (11 s against 29 s at 3,600 + 900 veh/h) and nobody waits at a gate.
-- **Separation and sensing are one decision.** Close following is only safe if objects on the road are seen within about a second, which is much faster than any roadside system in operation today. Behind a truck, one second is already too slow for the gap the hybrid keeps.
+- **Separation and sensing are one decision.** Close following is only safe if objects on the road are seen within about a second, which is much faster than any roadside system in operation today. Behind a vehicle that keeps a long gap (one that reports a fault), one second is already too slow for that gap; 0.5 s is enough.
 - **The radio link is part of the capacity.** Lost messages are safe, but they cost capacity, and losses in bursts cost far more than the same share lost at random. Two independent radio paths remove that cost.
 
 On motorways, with 100 % of vehicles guided, I rate SDR **technically viable, and worthwhile mainly for reliability and safety**, provided three things hold:
 
-1. the recommended hybrid separation is adopted (D1), with the long gap limited to trucks that cannot vouch for their load;
-2. roadside sensing confirms objects within about 1 s (D9), and a load falling off a truck within about 0.5 s, or the truck reports it itself;
-3. vehicles report their own lost loads (D10).
+1. the hybrid separation is adopted (D1): relative by default, a long gap only behind vehicles that report a fault and where sensing is degraded;
+2. roadside sensing confirms objects within about 1 s (D9);
+3. SDR-Ready trucks really shed almost nothing: enclosed bodies hold their cargo, and tyre and wheel monitoring reports a fault before anything comes off (D10). Reporting a loss as it happens is not enough at relative gaps.
 
 ---
 
@@ -61,7 +67,7 @@ On motorways, with 100 % of vehicles guided, I rate SDR **technically viable, an
 
 Measured on the simulated corridor (3 lanes, on-ramp, exit, 10 % trucks). Ramp demand is 900 veh/h; "served" is vehicles that completed their trip, per hour, followed by the mean speed on the road.
 
-| Main demand (veh/h) | Today's road | SDR hybrid (recommended) | SDR relative | SDR absolute |
+| Main demand (veh/h) | Today's road | SDR hybrid with the truck gap (until 2026-11-20) | SDR relative = hybrid without the truck gap (recommended since 2026-11-20) | SDR absolute |
 |---|---|---|---|---|
 | 2,400 | 3,317 · 109 km/h | 3,315 · 111 km/h | 3,337 · 112 km/h | 3,262 · 99 km/h |
 | 3,600 | 4,419 · 98 km/h | 4,491 · 108 km/h | 4,488 · 110 km/h | 3,301 · 98 km/h |
@@ -76,8 +82,8 @@ The spread between runs is ±50 to ±255 veh/h. The hybrid against today's road,
 | Today's road (human drivers) | 5,395 veh/h at about 60 km/h | – |
 | SDR absolute | 3,304 veh/h at 98 km/h | −39 % |
 | SDR absolute + adaptive speed (55 km/h) | 4,053 veh/h | −25 % |
-| **SDR hybrid (recommended)** | **6,002 veh/h at 98 km/h** | **+11 %** (interval +6 to +16 %) |
-| SDR relative | 7,084 veh/h at 99 km/h | +31 % (interval +23 to +39 %) |
+| SDR hybrid with the truck gap | 6,002 veh/h at 98 km/h | +11 % (interval +6 to +16 %) |
+| **SDR relative = hybrid without the truck gap (recommended)** | **7,084 veh/h at 99 km/h** | **+31 %** (interval +23 to +39 %) |
 
 Run 15 times instead of 5, the hybrid carries 5,957 and today's road 5,364 veh/h: +11 %.
 
@@ -140,7 +146,7 @@ The gains come from three mechanisms. Only the second depends on the separation 
 | 20 % | 4,895 | 4,438 (−9 %) | 5,684 (+16 %) |
 | 30 % | 4,564 | 3,630 (−20 %) | 4,741 (+3 %) |
 
-The absolute gap behind trucks costs the hybrid 15 % of capacity at 10 % trucks, 22 % at 20 % and 21 % at 30 %. Somewhere between 10 and 20 % trucks the hybrid's gain over today's road is gone. That rule is what removes lost-load collisions (section 2), so it cannot simply be dropped.
+The absolute gap behind trucks costs the hybrid 15 % of capacity at 10 % trucks, 22 % at 20 % and 21 % at 30 %. Somewhere between 10 and 20 % trucks the hybrid's gain over today's road is gone. That rule is what removes lost-load collisions behind trucks (section 2). Under the safety criterion adopted on 2026-11-20 it is dropped for SDR-Ready trucks, since SDR stays below today's road on every hazard without it (section 2); the relative column is then the one that counts.
 
 These figures are worse than in the first revision (−2 % at 20 % trucks, −11 % at 30 %). The earlier run let almost nobody in from the on-ramp at these truck shares (0–30 of the 900 veh/h), which left the road free of merging traffic and flattered the hybrid.
 
@@ -204,6 +210,7 @@ Absolute separation is not an efficiency option. At motorway speed it carries ab
   - After a brick-wall stop its worst impact is 45 km/h, against 69 for the uncapped hybrid and 68 on today's road. It keeps the gap behind trucks.
   - Planning with less grip than measured halves capacity and barely changes impacts.
   - Relative separation with a cap carries even more, but leaves lost loads unprotected.
+  - Since the truck gap was dropped (2026-11-20), this policy has to be checked again: the ice cap was chosen with the gap in place, and the per-hazard comparison of roadmap 6.1 was made in the dry only.
   - With 20 % less grip than the road measured (black ice), no SDR policy had a collision in normal traffic.
 
 **Radio quality costs capacity, and bursts cost most.** If authority messages are lost, the road widens every gap so that a run of lost messages rarely leaves a vehicle without authority. With messages lost at random:
@@ -265,7 +272,20 @@ What the simulations show (10 runs per case, 30 where the difference was within 
   - on ice.
 
   The model's human pile-ups are realistic on average, but they include too many of five or more vehicles, because its drivers never swerve ([roadmap](ROADMAP.md) 2.9).
-- **Lost loads are the most likely source of brick-wall events.** An absolute gap behind trucks removed all lost-load collisions in the simulation (65 in 30 runs without it, none with it). Today's road had collisions in 28 of 30 runs. This holds when the road confirms the load within 0.5 s, and only through slack in the other assumptions. With 1 s the gap is too short (section 1).
+- **Lost loads are the most likely source of brick-wall events.** An absolute gap behind trucks removes every lost-load collision behind trucks, as long as the road confirms the load within 0.5 s, and then only through slack in the other assumptions; with 1 s the gap is too short (section 1). Without the gap, SDR still has half as many collisions per lost load as today's road (below).
+
+**Per hazard, counted the same way (roadmap 6.1).** Until 2026-11-20 the two roads were counted differently (collisions for SDR, runs with a collision for today's road, from runs of different lengths). The table counts them alike: the collisions each hazard caused, per event, 30 runs per row on the same traffic, at 4,200 + 600 veh/h with 10 % trucks. The cells give collisions per event / impacts above 30 km/h per event / worst impact.
+
+| Hazard | Today's road | SDR without the truck gap (recommended) | SDR with the truck gap |
+|---|---|---|---|
+| A lost load that stops dead | 5.0 / 4.5 / 92 km/h; pile-ups of 5+ vehicles in 11 of 30 events | **2.4 / 1.8 / 79 km/h**; no pile-ups of 5+ | 0 |
+| The same, the truck reports the loss at once | – | 2.4 / 1.9 / 79 km/h (no better) | – |
+| A lost load that slides (6 m/s²) | 0.13 / 0 / 26 km/h | 0 | 0 |
+| A brick-wall stop | 3.4 / 3.0 / 110 km/h | **0.9 / 0.7 / 69 km/h** | 0.5 / 0.5 / 69 km/h |
+| An object 150 m ahead | 0.17 / 0.1 / 55 km/h | 0 | 0 |
+| A breakdown | 0 | 0 | 0 |
+
+SDR's advantage is outside the noise for the lost load that stops dead and the brick-wall stop, in collisions and in impacts above 30 km/h. For the sliding load and the object ahead today's road has so few collisions that 30 runs cannot tell the roads apart. The truck gap also helps after a brick-wall stop (0.5 against 0.9 collisions per event, just outside the noise), because a truck that stops dead then has a long gap behind it. A loss the truck reports at once does not help at a relative gap: the follower is about 19 m behind and cannot stop, whoever knows.
 - **Detection layers decide the frequency.** Road sensors that confirm an object within 0.5 s prevented every collision with lying objects (0 in 30 runs; today's road 8–9, a difference that is still within the noise because such objects are rarely hit at all). With nobody detecting the object, SDR is worse than human drivers, who at least see it. Car sensors only help when they share what they see. If cars all miss the same objects (low, dark ones), their shared sensors are not worth less, because what counts is whether the first car to reach the object sees it. It does matter when the road misses the same objects too.
 - **A breakdown costs less.** Without a safety lane a broken-down vehicle cost the SDR road 6 vehicle-hours and today's road 18 (30 runs). With the safety lane or hard shoulder it cost neither road anything measurable.
 
@@ -274,18 +294,25 @@ What the simulations cannot show is *how often* things go wrong. That is where I
 - The simulated human drivers are idealised: always attentive, never drunk, never on their phone. On real roads the driver is the critical reason in about 94 % of crashes (NHTSA). SDR removes those by design.
 - What remains is a narrower class: unseen objects, sudden mechanical failure and system faults.
 
-The foreign-object risk model in SDR-03 puts orders of magnitude on the first of these:
+The foreign-object risk model in SDR-03 puts orders of magnitude on the first of these. Since roadmap 6.1 it also has today's road on the same measure: collisions per billion vehicle-km, using the per-event figures of the table above.
 
 | Setup | Object collisions per billion vehicle-km: central (range of the researched inputs) |
 |---|---|
-| Relative separation, today's detection technology (~10 s) | ~22 (19–65): **worse than human drivers** |
-| Recommended hybrid, SDR-grade sensing (≤1 s, V2V) | ~5 (3–16) |
-| Same, plus vehicles reporting their own lost cargo | **~3 (1.5–11)** |
+| Today's road: human drivers, today's vehicles | ~25 (21–75) |
+| Relative separation, today's detection technology (~10 s) | ~26 (22–77): **no better than today's road** |
+| Relative separation, SDR-grade sensing (≤1 s, V2V), today's vehicles | ~12 (10–35) |
+| **No truck gap, SDR-grade sensing, SDR-Ready fleet (recommended)** | **~9 (7–30)** |
+| The same with the truck gap | ~7 (5–25) |
+| Hybrid with the truck gap, SDR-grade sensing, today's vehicles (with or without vehicles reporting their own lost cargo) | ~7 (5–25) |
 | Absolute separation, SDR-grade sensing | ~0.3 (0.3–0.9) |
-| *For scale: debris crashes today (US, all roads)* | *~10* |
+| *For scale: debris crashes today, recorded (US, all roads, all debris)* | *~10* |
 | *For scale: GB motorway casualties, all causes* | *~47* |
 
-These numbers rest on unmeasured assumptions, above all how many objects are heavy enough to stop a car dead (a factor of 4 on every row). Since roadmap item 2.8 every input has a range with its source; the researched ones (object rate, truck share, cargo share) moved the hybrid rows up by a factor of 2–5: fewer lost loads come off trucks than assumed (30–50 %, not 70 %), and about half of what vehicles shed is tyres and parts, which load monitoring does not see. The ranking holds in every combination of inputs; the values do not. The best SDR setup stays below today's debris-crash rate unless nearly every input is at its worst at once (up to 30).
+**Per hazard, the recommended setup is below today's road for every hazard, in every combination of inputs.** SDR ÷ today: lying objects 0.38; cargo falling off trucks 0.05 (0.01–0.12); truck tyres and parts 0.34 (0.19–0.48); losses from cars and vans 0.48; all objects 0.37 (0.28–0.44). Two things carry this: SDR has half as many collisions per lost load, and SDR-Ready trucks shed less. Even against a today's road whose trucks were built the same way, SDR has about half the collisions (0.47).
+
+The biggest residual is not trucks but cars and vans: about 7 of the 9 collisions per billion vehicle-km come from what falls off them, which no truck rule covers. Keeping the truck gap removes only about 2.
+
+These numbers rest on unmeasured assumptions, above all how many objects are heavy enough to stop a car dead (a factor of 4 on every row, and the same for both roads). The comparison with today's road also rests on the simulated drivers, who brake but never swerve, so today's road may count too many collisions per lost load (roadmap 2.9). SDR would lose its advantage on lost loads only if today's road had 63 % fewer collisions per lost load than simulated (52 % for losses from cars and vans, with or without the truck gap). The model's today's road (about 25) sits above the recorded debris-crash rate (about 10). That is expected, since a crash can hold several collisions, but it is not a calibration.
 
 ---
 
@@ -295,13 +322,13 @@ These numbers rest on unmeasured assumptions, above all how many objects are hea
 |---|---|---|
 | **Transition to 100 % guided vehicles** | The end state (every vehicle guided, no mixed traffic) is coherent. But replacing a national fleet takes 15–20 years even with mandates. The path is harder than the destination. | Not modelled. Rollout per SDR-01 §9: dedicated, physically separated SDR lanes first. |
 | **Correlated failure and cyberattack** | One software bug or one attack could affect thousands of vehicles at once. I only simulated the failures I thought of. | Not modelled. Next step: system-failure risk analysis. |
-| **Roadside sensing performance** | The safety case needs ≤1 s object confirmation, and about 0.5 s for a load falling off a truck. Operational systems today take 10–60 s, and the UK's stopped-vehicle radar misses 10–40 %. | Requirement set (D9). Needs a proof of concept. |
+| **Roadside sensing performance** | The safety case needs ≤1 s object confirmation (0.5 s behind a vehicle that keeps a long gap because it reports a fault). Operational systems today take 10–60 s, and the UK's stopped-vehicle radar misses 10–40 %. | Requirement set (D9). Needs a proof of concept. |
 | **Radio link quality** | Lost messages cost capacity (6 % at 5 % random loss, 24–70 % in half-second bursts) or, if ignored, cause full-force braking. A place where every path is down stops traffic. | Bursts, dead spots and two paths modelled. Requirement set (D6): two independent paths of at least 99 % each. Real burst lengths, loss on the way back and jamming are not modelled. |
-| **Truck-heavy corridors** | From somewhere between 10 and 20 % trucks the hybrid carries less than today's road (−9 % at 20 %, −22 % at 30 %). | Measured. One mitigation holds up on paper: no long gap behind trucks with an enclosed, monitored load, if at least half the trucks qualify. |
-| **Load monitoring** | It now carries two things: the warning that a load is leaving (D10), and the exemption that keeps freight routes above today's capacity. Nobody measures how often trucks lose loads by body type, and no study shows any cargo device reducing lost loads. | Not proven. [Roadmap](ROADMAP.md) 4.4. |
+| **Truck-heavy corridors** | With the long gap behind every truck the hybrid carried less than today's road from somewhere between 10 and 20 % trucks (−9 % at 20 %, −20 % at 30 %). Without it, as decided under the safety criterion: +16 % at 20 % trucks, +3 % at 30 %. | Measured. Rests on SDR-Ready trucks shedding almost nothing (next row). |
+| **Load monitoring and enclosed trucks** | They now carry the truck rule: the long gap is dropped because SDR-Ready trucks are enclosed and report tyre and wheel faults before anything comes off. Reporting a loss as it happens does not help at relative gaps. Nobody measures how often an enclosed truck still sheds something that stops a car, or how early tyre and wheel monitoring warns. If trucks shed more than assumed, SDR still stays below today's road per hazard in every combination of the model's inputs, but the margin shrinks. | Not proven. [Roadmap](ROADMAP.md) 4.4. |
 | **False alarms** | A sensor that is too sensitive stops traffic for nothing, which costs capacity and public trust. | Modelled; no collisions. Budget set (D9): about 1 per km per hour with a 10 s re-check, and a car's report does not close a lane on its own. No roadside detector has been measured against it. |
 | **Who waits when the road is full** | Above capacity somebody waits, on SDR as today. SDR can choose who; today it is the main entry. | Measured. The rule is a policy question. |
-| **Cost** | Sensors, compute and redundant radio every few hundred metres, plus fencing and a safety lane, maintained forever. With a capacity gain of about 11 % at best instead of 36 %, and possibly none against a real road, the case rests on safety and reliability, not on avoided road building. | Not estimated. |
+| **Cost** | Sensors, compute and redundant radio every few hundred metres, plus fencing and a safety lane, maintained forever. With a capacity gain of about 31 % on the simulated road (about 12–26 % against a real merge, at 10 % trucks) instead of the 36 % first reported, the case rests on safety and reliability as much as on avoided road building. | Not estimated. |
 | **Vehicle reaction times** | A 0.5 s actuator delay or control cycle puts the hybrid below today's road. | Assumed (0.2 s and 0.1 s). A requirement on vehicles, not yet set. |
 | **Cities** | Pedestrians and cyclists bring back exactly the unpredictability SDR removes on motorways. | Out of scope so far (SDR-01 phases 3–4). |
 
@@ -314,23 +341,23 @@ These numbers rest on unmeasured assumptions, above all how many objects are hea
 | SDR removes traffic breakdown, stop-and-go waves and hard braking | High |
 | Above today's capacity, SDR keeps speed at about 100 km/h; trip delay is lower at every demand | High |
 | Below capacity nobody waits at a gate; above it people wait about as long as in today's queue | High for this corridor |
-| Hybrid separation carries about 11 % more than the simulated today's road at 10 % trucks | Medium: the interval from 5 runs is 6–16 % |
-| Hybrid separation carries more than a real road | Low: against published capacities of a real merge, between +5 % and −7 %. The human baseline is not fitted to a real road |
+| SDR without the truck gap carries about 31 % more than the simulated today's road at 10 % trucks (with the gap: 11 %) | Medium: the interval from 5 runs is 23–39 % (with the gap 6–16 %) |
+| SDR carries more than a real road | Medium-low: against published capacities of a real merge, about +12 to +26 % without the truck gap (+5 % to −7 % with it). The human baseline is not fitted to a real road |
 | SDR has fewer collisions than today's road after a sudden stop | High within the model: it holds for every assumption, layout and driver reaction time tested, and on ice |
-| The capacity gain shrinks with the truck share and is gone before 20 % | Medium-high |
-| Exempting trucks with an enclosed, monitored load brings the gain back from about half the trucks | Medium for the arithmetic; unknown for the assumption that such trucks lose nothing dangerous |
+| The capacity gain shrinks with the truck share | Medium-high: without the truck gap +31 %, +16 % and +3 % at 10, 20 and 30 % trucks |
+| Without the truck gap SDR stays below today's road on every hazard compared | Medium: holds in the simulator (30 runs per hazard) and in every combination of the risk model's inputs. Today's simulated drivers never swerve, which flatters SDR; it loses its advantage on lost loads only if today's road has 63 % fewer collisions per lost load than simulated |
 | A lower speed under pressure adds at most 4 % capacity | Medium-high, for this corridor |
 | Exact percentages | Low: actuator delay, control cycle, radio latency, margin and braking each move them by more than 5 %, and the layout by more |
 | System failures (radio, controller, brakes) can be made fail-safe | High, within the failures modelled, including radio loss in bursts and dead spots |
-| SDR is safer than human driving overall | Plausible: depends on sensing speed, load monitoring and system-failure risk, none of them proven yet |
+| SDR is safer than human driving overall | Plausible: about a third of today's object collisions in the risk model; depends on sensing speed, what SDR-Ready vehicles shed and system-failure risk, none of them proven yet |
 | Feasibility of ≤1 s roadside object detection | Unknown: the decisive engineering question |
 
 ---
 
 ## 5. What would change this assessment
 
-- **Upward:** a roadside sensing prototype that confirms pallet-, tyre- and deer-sized objects within 1 s, at night and in rain, with at most about 1 false alarm per km per hour. Evidence that a truck with an enclosed, monitored load sheds nothing that stops a car, so that the long gap can be dropped behind it.
-- **Downward:** evidence that heavy objects (enough to stop a car dead) are much more common than the assumed 10 % of obstructions. A system-failure analysis showing that common-cause failures dominate. Detector data showing that a real merge carries about 6,000 veh/h or more: the hybrid's capacity gain would then be zero, and published figures already point that way. Roadside sensing that needs a full second for a load falling off a truck, with no warning from the truck itself: the gap behind trucks then has to grow, and the gain at 10 % trucks shrinks from 11 % to 3 %. Vehicles that react in 0.5 s rather than 0.2 s. A radio whose two paths fail together.
+- **Upward:** a roadside sensing prototype that confirms pallet-, tyre- and deer-sized objects within 1 s, at night and in rain, with at most about 1 false alarm per km per hour. Evidence that an enclosed truck with tyre and wheel monitoring sheds almost nothing that stops a car, which the dropped truck gap now relies on. A human baseline that swerves and still has as many collisions per lost load as today's.
+- **Downward:** evidence that heavy objects (enough to stop a car dead) are much more common than the assumed 10 % of obstructions. A system-failure analysis showing that common-cause failures dominate. Detector data showing that a real merge carries about 6,000 veh/h or more: the hybrid's capacity gain would then be zero, and published figures already point that way. Evidence that enclosed trucks still shed often, or that tyres and wheels come off without warning, so that trucks again need the long gap (and the gain at 10 % trucks falls from 31 % to 11 %, or to 3 % if the road needs a full second to confirm a lost load). A human baseline that swerves and loses far fewer vehicles per lost load than the simulated one. Vehicles that react in 0.5 s rather than 0.2 s. A radio whose two paths fail together.
 - **Either way:** a cost model per kilometre, a human baseline fitted to loop-detector data from a real motorway, and data on what trucks lose and how it moves when it lands.
 
 ---
@@ -355,6 +382,11 @@ Both rows of a comparison were run on the same traffic, run by run. The interval
 | The same, 30 % trucks | −934 veh/h (−20 %) | −1,028 to −841 | 5 | yes |
 | Hybrid against relative, served, 10 % trucks (cost of the truck rule) | −1,082 veh/h (−15 %) | −1,443 to −721 | 5 | yes |
 | Half the trucks exempt, against today's road, 20 % trucks | +105 veh/h (+2 %) | +9 to +200 | 15 | yes |
+| No truck gap against today's road, collisions per lost load that stops dead | −2.6 (−52 %) | −4.3 to −0.9 | 30 | yes |
+| The same, impacts above 30 km/h per lost load | −2.7 (−59 %) | −4.3 to −1.0 | 30 | yes |
+| No truck gap against today's road, collisions per brick-wall stop | −2.5 (−73 %) | −3.7 to −1.3 | 30 | yes |
+| Truck gap against no truck gap, collisions per brick-wall stop | −0.4 (−43 %) | −0.75 to −0.05 | 30 | yes |
+| Loss reported at once against confirmed in 0.5 s, no truck gap, collisions per lost load | +0.03 (+1 %) | −0.09 to +0.15 | 30 | no |
 | Sliding-load gap plus 1 s, against today's road, 20 % trucks | −111 veh/h (−2 %) | −176 to −47 | 5 | yes |
 | Trucks follow trucks closely, against the rule as it is, 20 % trucks | +94 veh/h (+2 %) | +3 to +184 | 5 | yes |
 | Truck lane, against the rule as it is, 20 % trucks | −530 veh/h (−12 %) | −614 to −447 | 5 | yes |

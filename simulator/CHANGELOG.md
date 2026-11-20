@@ -4,6 +4,24 @@ What was built, what went wrong and how it was fixed. Many fixes are design less
 
 ---
 
+## 2026-11-20 (roadmap 6.1): which safety criterion SDR uses (→ [report](../reports/6.1-which-safety-criterion.md))
+
+Roadmap item 6.1: compare SDR and today's road per hazard, on one measure, and decide whether the long gap behind trucks is needed. No engine change; the default behaviour is unchanged, so only the new group was run.
+
+### Added
+- **Experiment group `hazards`** (results section 20a): each hazard (a lost load that stops dead, one that slides, a brick-wall stop, an object 150 m ahead, a breakdown) on today's road, on the hybrid without the truck gap, and on the hybrid as it is, plus the lost load when the truck reports it at once. Every row has 30 runs with the same seeds and the same observation window, and counts the collisions the hazard caused (minus those in the same traffic without it), per event, with impact speeds and the vehicles involved.
+- **Risk model:**
+  - scenarios for today's road (T, and T2 with SDR-Ready trucks), relative separation with SDR-grade detection (F), and the SDR-Ready fleet without and with the truck gap (G, H);
+  - two inputs for that fleet, both assumptions: the share of cargo losses an enclosed body still lets out, and the share of tyre and wheel losses reported in advance as a fault;
+  - a split per hazard (lying objects, truck cargo, truck tyres and parts, other vehicles), the ratio SDR ÷ today per hazard over every combination of inputs, and how far today's road would have to improve for SDR to lose its advantage.
+
+### Changed: how the risk model counts
+- **The two roads were counted differently.** SDR-04 gave lost-load collisions as a total for SDR (65 in 30 runs) and as runs with a collision for today's road (28 of 30), from runs of different lengths. Both are now counted as collisions caused per event, from the same seeds.
+- **A lost load followed at a relative gap counted as a brick-wall stop** (1.5–1.8 collisions per event). The simulator measures 2.4 for a lost load at a relative gap, so scenario C rises from 4.7 to 7.2 collisions per billion vehicle-km.
+- **A loss the vehicle reported itself was counted as harmless, whatever the gap.** At a relative gap it is not: with the road told at once, the follower hit the load in 30 of 30 runs, exactly as often as with a 0.5 s confirmation (2.43 against 2.40 collisions per event). Scenario D (load monitoring) falls from 2.8 to the level of C. **Lesson:** a warning helps only a follower who has room to use it. At relative gaps the follower is too close, whoever knows; what load monitoring buys is the long gap (or no loss at all), not the message.
+
+---
+
 ## 2026-11-20 (roadmap 2): sensitivity, ice, pile-ups, break-even, layouts, false alarms, radio, risk inputs (→ [report](../reports/2-make-the-model-more-trustworthy.md))
 
 Roadmap section 2: how far the figures can be trusted. New parameters and seven new experiment groups; two faults in the SDR lane change were found and fixed on the way. The engine's default behaviour changed (a lane change next to a confirmed object, and every SDR lane change now waits for an acknowledgement), so every number was re-run.

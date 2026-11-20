@@ -1052,6 +1052,60 @@ const detectorD1 = (pd, tau, F) => (faThreshold(tau, F) - gaussQinv(pd)) / Math.
 // camera per day; with a camera every 100 m that is about 0.01 per km per hour.
 const FA_TODAY = { pd: 0.95, tau: 10, F: 0.025 * 10 / 24 };
 
+// Per hazard, counted the same way on both roads (roadmap 6.1). Every row has the same seeds and the same
+// observation window; "collisions caused" = collisions minus those in the same traffic without the hazard.
+const HAZ_SEEDS = range(QUICK ? 2 : 30);
+const HAZ_NOGAP = 'SDR, no truck gap (relative behind trucks)';
+const HAZ_SYSTEMS = {
+  [TODAY]:                            { mode: 'human' },
+  [HAZ_NOGAP]:                        { mode: 'sdr', separation: 'hybrid', hybridTruckAbsolute: false },
+  'SDR, hybrid (truck gap as it is)': { mode: 'sdr', separation: 'hybrid' },
+};
+const HAZ_REPORTED = 'SDR, no truck gap, loss reported at once';
+const HAZARDS = {
+  'load falls off a truck, stops dead':       { kind: 'load falls off a truck', load: {} },
+  'load falls off a truck, slides at 6 m/s²': { kind: 'load falls off a truck', load: { slide: 6 } },
+  'brick-wall stop':                          { kind: 'brick-wall stop' },
+  'object 150 m ahead':                       { kind: 'object 150 m ahead' },
+  'breakdown':                                { kind: 'breakdown' },
+};
+const incCaused = (r, e) => r[e.inc].applicable ? r[e.inc].collisions - (e.base >= 0 ? r[e.base].collisions : 0) : NaN;
+const incOver30 = (r, e) => r[e.inc].applicable ? (r[e.inc].impactsKmh || []).filter(v => v > 30).length : NaN;
+const HAZ_MEASURES = { 'Collisions caused per event': incCaused, 'Impacts above 30 km/h per event': incOver30 };
+function hazardRuns(p, cfg, kind, opts) {
+  const runs = seededRuns(HAZ_SEEDS, seed => ({ inc: p.add('incident', cfg, kind, seed, opts), base: p.unique('baseline', cfg, seed, opts) }), MORE_INC);
+  runs.incident = true;
+  return runs;
+}
+function groupHazards(p) {
+  const rows = [];
+  for (const [hname, h] of Object.entries(HAZARDS)) {
+    const opts = h.load ? { load: h.load } : undefined;
+    for (const [sname, sys] of Object.entries(HAZ_SYSTEMS))
+      rows.push({ hazard: hname, system: sname, runs: hazardRuns(p, Object.assign({}, INC_DEMAND, sys), h.kind, opts) });
+    if (h.load && !h.load.slide)     // the truck reports its own loss (load monitoring, D10): the road knows with no delay
+      rows.push({ hazard: hname, system: HAZ_REPORTED, runs: hazardRuns(p, Object.assign({}, INC_DEMAND, HAZ_SYSTEMS[HAZ_NOGAP], { roadDetectionDelay: 0 }), h.kind, opts) });
+  }
+  const at = (h, s) => rows.find(x => x.hazard === h && x.system === s);
+  for (const row of rows) {
+    if (row.system === TODAY) continue;
+    p.compare(row.hazard, row.system, row.runs, TODAY, at(row.hazard, TODAY).runs, HAZ_MEASURES);
+    if (row.system !== HAZ_NOGAP) p.compare(row.hazard, row.system, row.runs, HAZ_NOGAP, at(row.hazard, HAZ_NOGAP).runs, HAZ_MEASURES);
+  }
+  return r => rows.map(({ runs, ...m }) => {
+    const out = Object.assign({}, m, incidentSummary(r, runs));
+    const done = runs.map(e => ({ i: r[e.inc], b: e.base >= 0 ? r[e.base] : null })).filter(x => x.i.applicable);
+    out.caused = done.reduce((a, x) => a + x.i.collisions - (x.b ? x.b.collisions : 0), 0);
+    const inv = done.map(x => x.i.involved || 0);
+    out.involvedMean = mean(inv); out.involved5 = inv.filter(n => n >= 5).length;
+    const imp = done.flatMap(x => x.i.impactsKmh || []).sort((a, b) => a - b);
+    out.impacts = imp.length;
+    out.impactMedianKmh = imp.length ? imp[Math.floor(imp.length / 2)] : 0;
+    out.impactOver30 = imp.filter(v => v > 30).length;
+    return out;
+  });
+}
+
 const GROUPS = {
   demand: groupDemand, incidents: groupIncidents, weather: groupWeather, theory: groupTheory,
   hybrid: groupHybrid,
@@ -1075,6 +1129,7 @@ const GROUPS = {
   calibration: groupCalibration,
   layouts: groupLayouts,
   'false-alarms': groupFalseAlarms,
+  hazards: groupHazards,
 };
 
 // ------------------------------------------------------------------ report
@@ -1095,6 +1150,7 @@ const GROUP_TITLES = {
   sensitivity: 'Sensitivity of the SDR assumptions (section 15)', ice: 'A policy for ice (section 16)', pileup: 'The pile-up on today\'s road (section 17)',
   calibration: 'Break-even with a faster today\'s road (section 18)', layouts: 'Road layouts (section 19)',
   'false-alarms': 'Sensor false alarms and shared misses (section 20)',
+  hazards: 'Per hazard, counted the same way (section 20a)',
   sensors: 'Road-sensor outage (section 6)', weather: 'Weather (section 7)', 'packet-loss': 'Radio packet loss (section 9)', trucks: 'Truck share (section 10)',
   radio: 'Realistic radio loss (section 9a)',
 };
@@ -1428,6 +1484,14 @@ function report(res) {
       }
       L.push('', `Capacity cost of the false-alarm rates in the third column (saturated, cleared after ${clearB} s): ${[0.1, 1, 10].map(F => `${F} per km per hour → ${f1(costPct(clearB, F))} %`).join(', ')}. A collision chance of 0 means none in the runs above (10 runs resolve about 10 %, 30 runs about 3 %).`, '');
     }
+  }
+  if (res.hazards) {
+    L.push('## 20a. Per hazard, counted the same way', '', head('hazards'), '');
+    L.push('Each hazard on today\'s road and on SDR, counted the same way: 4,200 + 600 veh/h, 10 % trucks, the same seeds on every road, the hazard at t = 10 min around x = 3 km, observed for 5 minutes. "Collisions caused" = collisions minus those in the same traffic without the hazard (in brackets). SDR sensing as designed: road sensors confirm an object after 0.5 s, and every car\'s own sensor sees it within range and reports it to the road. "No truck gap" is the hybrid without the long gap behind trucks: it follows trucks as relative separation does. "Loss reported at once": the same, but the road knows of the lost load with no delay, as if the truck reported it itself (load monitoring, D10). A lost load that slides slows at 6 m/s² instead of stopping dead. Vehicles involved = every vehicle in a collision after the hazard (the stopped or broken-down vehicle counts once something hits it), per event. An event is a run in which the hazard could be placed (a lost load needs a vehicle within 150 m behind a truck).', '');
+    L.push('| Hazard | System | Events | Events with a collision | Collisions caused (background) | Collisions caused per event | Vehicles involved per event: mean / events with 5+ | Impact speed, median (km/h) | Impacts above 30 km/h | Worst impact (km/h) | Mean gap of the follower (m) |');
+    L.push('|---|---|---|---|---|---|---|---|---|---|---|');
+    for (const r of res.hazards) L.push(`| ${r.hazard} | ${r.system} | ${r.runs} | ${r.runsWithCollision} | ${r.caused}${bg(r)} | ${f2(r.caused / r.runs)} | ${f1(r.involvedMean)} / ${r.involved5} | ${r.impacts ? f0(r.impactMedianKmh) : '–'} | ${r.impactOver30} | ${f0(r.maxImpactKmh)} | ${num(r.gap) ? f0(r.gap) : '–'} |`);
+    L.push('');
   }
   const cmp = res._cmp || {};
   const cmpKeys = Object.keys(GROUP_TITLES).filter(k => res[k] && cmp[k] && cmp[k].length);
