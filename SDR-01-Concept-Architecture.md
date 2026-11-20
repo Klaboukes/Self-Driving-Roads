@@ -175,6 +175,8 @@ The envelope size depends on:
 
 What manufacturers must build. This is far less than a full SDC.
 
+Only SDR-Ready vehicles enter the network. With SDR accepted and in wide use, manufacturers build their vehicles for it, so the standard may ask for things today's vehicles do not have. Two of these are set (2026-11-20): an enclosed, monitored load body on every truck and trailer, and coordinated braking in every vehicle.
+
 | Subsystem | Requirement |
 |---|---|
 | Drive-by-wire | Redundant steering, braking and propulsion actuators. Certified response latency. |
@@ -184,6 +186,8 @@ What manufacturers must build. This is far less than a full SDC.
 | Dynamics profile | Certified max acceleration and braking, and turning limits. Re-verified at periodic inspection and in operation, since the road can measure actual braking. |
 | Health reporting | Brakes, tyres, battery/fuel, actuator status broadcast continuously. Brake faults reported within 0.5 s, including faults found when the vehicle brakes. |
 | Load monitoring | Trucks, trailers and roof/rear carriers detect a load leaving (coupling, latches, weight, rear camera) and broadcast it at once, to the road and over V2V (D10). |
+| Enclosed load | Every truck and trailer carries its load in an enclosed body with monitored doors; no open loads. Tyres and wheels are monitored and reported too, because about half of what trucks shed today is tyres and vehicle parts, which a body does not hold back (D10). |
+| Coordinated braking | Every vehicle follows a braking command sent to a string of vehicles at once (by the road or V2V), so followers brake with the vehicle ahead instead of after it, and keeps to a braking cap set for its string, so it never brakes harder than the vehicles behind it can match unless its own guardian sees an obstacle (D13). |
 | Safe-stop executor | Can run the stored safe-stop trajectory with no comms at all. From the right-hand lane, the safe stop includes pulling into the safety lane when its own sensors see it clear. |
 | Manual mode | Normal driving outside the SDR network. |
 
@@ -245,9 +249,10 @@ These are the problems the design must solve, not reasons to stop.
 | D7 | Guardian sensor scope | Forward only / 360° | Forward only (keeps cost low, road covers the rest). Every guardian detection is reported to the road: one car's report protects everyone behind it ([SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md)) |
 | D8 | Who operates it | State / regulated operator / concession | To discuss |
 | D9 | Roadside object detection | Cameras / radar / lidar; spacing; confirmation time | Overlapping, at least two sensor types, **≤1 s confirmation**, ≥99 % detection, safety-critical rating. Today's incident detection (10–60 s) is far too slow ([SDR-03](SDR-03-Hybrid-Detection-Safety-Lane.md)). False alarms: at most about 1 per km per hour if a re-check clears one within 10 s, 0.5 if the re-check takes a minute; that keeps their cost below 1 % of capacity. A car's report of an object must be confirmed or cleared by the road within about 10 s and does not close a lane on its own. Open: for a load falling off a truck, 0.5 s was fast enough for the gap the hybrid keeps and 1 s was not, and no road-only sensor is likely to reach 99 % in 0.5 s, so the cars' shared sensors or the truck itself have to be the first witness ([SDR-04](SDR-04-Viability-Assessment.md)) |
-| D10 | Load monitoring | None / trucks only / all external loads | Required for trucks, trailers and roof/rear carriers: detect a load leaving and broadcast it at once. A truck that can vouch for its load (enclosed body, monitored doors, tyres and wheels) could be followed at the normal gap; how far that can be trusted is unproven ([SDR-04](SDR-04-Viability-Assessment.md)) |
+| D10 | Load monitoring | None / trucks only / all external loads | Required for trucks, trailers and roof/rear carriers: detect a load leaving and broadcast it at once. Since 2026-11-20 every truck and trailer also has an enclosed body with monitored doors, tyres and wheels (§7). Every truck can then vouch for its load. If none of them needs the long gap, the hybrid follows trucks as relative separation does, which in simulation carried 31 % more than today's road at 10 % trucks and 16 % more at 20 %. Open: whether tyres and parts alone still justify the long gap behind trucks in D1, and how far an enclosed truck can be trusted to shed nothing that stops a car ([ROADMAP](ROADMAP.md) 6.1, 4.4) |
 | D11 | Safety lane | None / refuge areas only / continuous lane | Continuous safety lane (the current hard shoulder) plus refuge areas at junctions; the road sidetracks faulty vehicles while they still move |
 | D12 | Fencing and access control | Partial / full | Full fencing with wildlife crossings; pedestrian intrusion is treated as an object |
+| D13 | Coordinated braking | None / per string of vehicles / whole segment | Required in every SDR-Ready vehicle (2026-11-20, §7). It could cut the gap between cars from about 38 m to about 14 m at 120 km/h (an estimate). The gap rule, the string length and what a sudden stop does at those gaps are open ([ROADMAP](ROADMAP.md) 6.2) |
 
 ---
 

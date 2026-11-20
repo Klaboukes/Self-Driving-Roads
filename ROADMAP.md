@@ -1,6 +1,6 @@
 # SDR roadmap: further work and investigations
 
-Status: proposals from the review of 2026-11-19 · nothing here is decided · section 1 worked through on 2026-11-19 ([report](reports/1-questions-from-latest-results.md)) · section 2 worked through on 2026-11-19 and 20 ([report](reports/2-make-the-model-more-trustworthy.md))
+Status: proposals from the review of 2026-11-19 · nothing here is decided · section 1 worked through on 2026-11-19 ([report](reports/1-questions-from-latest-results.md)) · section 2 worked through on 2026-11-19 and 20 ([report](reports/2-make-the-model-more-trustworthy.md)) · section 6 added on 2026-11-20
 
 These are ideas for what to do next, ordered by how much they could change the conclusions in [SDR-04](SDR-04-Viability-Assessment.md) and how cheap they are to try. Each item says why it matters, what to do and when it counts as done. The sizes are rough guesses: **S** is a few hours, **M** a day or two, **L** weeks or work that needs outside data or hardware.
 
@@ -29,6 +29,8 @@ These are ideas for what to do next, ordered by how much they could change the c
 | 5.1 | Energy per vehicle-km | M | The environmental case | open (new) |
 | 5.2 | The slipstream in close formations | M | The environmental case, the truck rule (D1) | open (new) |
 | 5.3 | Ride comfort | S–M | The comfort case, the control law | open (new) |
+| 6.1 | Which safety criterion SDR uses | S–M | The truck rule (D1), the capacity gain on freight routes | open (new) |
+| 6.2 | Coordinated braking and shorter gaps | M–L | The capacity ceiling, the brick-wall risk | open (new) |
 
 ---
 
@@ -188,6 +190,7 @@ These decide whether SDR is viable, and no amount of simulation settles them. Mo
    - nobody measures it today: no study shows that any cargo-securing device reduces lost loads, and no road authority records which kind of vehicle an object came from;
    - an enclosed, rigid body with door sensing stops cargo from leaving, but about half of what trucks shed is tyres and vehicle parts, so "enclosed" alone is not enough to exempt a truck: tyre-pressure and wheel monitoring reported to the road has to be part of it;
    - whether a lost load stops dead or slides decides how long the gap has to be (a load sliding at 6 m/s² needs no more than the relative gap), and nobody has measured that either.
+   - Since 2026-11-20 an enclosed, monitored body is required on every truck and trailer (SDR-01 §7, D10), so the question narrows: how often does an enclosed truck still shed something that stops a car, and how early do tyre and wheel monitoring see a tyre or wheel coming off? Item 6.1 depends on the answer.
 5. **Gate fairness rules.** Admission control tells some people "not now". Who waits, for how long, and can a traveller pay or book to avoid it (D5)? Item 1.1 gives the numbers; the rules are a policy question. One of them is now concrete: above capacity the on-ramp gets in almost at once (median wait 3 s) while the main entry waits about three minutes. Today's road does the same (15 s against 164 s), because merging traffic takes its turn at the merge and the queue forms upstream. SDR could choose differently; the ramp gate that would do it does not work yet (its slot prediction almost never finds a slot).
 6. **Network layer.** Several corridors with trip booking and routing. A single corridor cannot show whether gates upstream simply move the queue somewhere else.
 7. **Protocol specification.** The messages between vehicle and segment controller: plan, authority, acknowledgement, state, health, safe stop. Items 2.3 and the supervision rule in the simulator are inputs.
@@ -230,6 +233,45 @@ Two factors added to the design principles after safety, efficiency and speed ([
 
 ---
 
+## 6. The safety criterion and the capacity ceiling — new, 2026-11-20
+
+The capacity gain is smaller than hoped: the hybrid carries 11 % more than today's road at 10 % trucks and less from 20 % trucks. Two questions follow. Is the one expensive safety rule, the long gap behind trucks, stricter than SDR needs to be? And what would it take to get well past +30 %, which even relative separation does not exceed on the corridor?
+
+Both items assume that vehicles are built for SDR (decided 2026-11-20, [SDR-01](SDR-01-Concept-Architecture.md) §7). Every truck and trailer has an enclosed body with monitored doors, tyres and wheels. Every vehicle has coordinated braking. The questions are therefore what these features are worth and what they leave uncovered, not whether vehicles will have them.
+
+### 6.1 Which safety criterion SDR uses (S–M)
+
+- **Why:** the long gap behind trucks is the only safety rule that costs much capacity. Relative separation, which has no such gap, carries 31 % more than today's road at 10 % trucks (the hybrid 11 %) and 16 % more at 20 % trucks (the hybrid 9 % less). The rule follows from reading "safety first" as "safe against each foreseeable event". Today's drivers keep no such gap behind trucks, and the simulated today's road also hits lost loads. A different reading is possible: clearly safer than today overall, and no worse than today for any single kind of hazard. That is close to the "positive risk balance" the German ethics commission on automated driving asked for in 2017. Whether relative separation meets it is unknown. The risk model has relative separation only with today's detection (about 22 object collisions per billion vehicle-km, worse than human drivers at about 10). The row with SDR-grade sensing and vehicles reporting their own lost loads was never computed.
+
+  With every truck enclosed (D10), this question gets narrower and sharper. Cargo should no longer fall off; what trucks still shed is tyres, wheels and other parts, which is about half of what they shed today. If that is not enough to justify the long gap behind trucks, the gap can go for every truck. The hybrid then follows trucks as relative separation does: +31 % at 10 % trucks, +16 % at 20 %, +3 % at 30 %.
+- **Do:**
+  - add risk-model rows for relative separation with SDR-grade sensing (≤1 s, V2V) and the SDR-Ready fleet: every truck enclosed, tyres and wheels monitored and reported, using the input ranges of item 2.8. Give the residual risk from tyres and parts separately, and how much tyre and wheel monitoring takes off it (a pressure loss is often reported before the tread leaves);
+  - compare SDR and today's road per hazard (lost load, brick-wall stop, lying debris, breakdown) on the same measure: collisions and impact speeds per event in the simulator, collisions per billion vehicle-km in the risk model. The lost-load figures in SDR-04 are counted differently for the two roads (65 collisions in 30 runs for SDR without the truck gap, collisions in 28 of 30 runs for today's road), so count them the same way first;
+  - write down both criteria and what each means for D1: "safe against each event" keeps the truck gap; "no worse per hazard, clearly safer overall" could drop it wherever the per-hazard comparison allows;
+  - note what the second criterion asks of the public and of liability. A machine-run road will likely be judged more strictly than human drivers, and the road operator chose the gap, which a human driver did not.
+- **Done when:** SDR-01 states which safety criterion SDR uses (the user's decision, not the simulator's), and SDR-04 shows per hazard whether relative separation with SDR-grade sensing meets "no worse than today", next to its capacity.
+
+### 6.2 Coordinated braking and shorter gaps (M–L)
+
+- **Why:** even without the truck gap the corridor gains about 30 %. The relative gap itself is only about 20 % shorter than a human's: about 38 m or 1.14 s at 120 km/h, against 1.4 s (`sdrGapTerms` in `engine.js`). It is made of:
+  - about 9 m fixed: the car's length, the margin, position uncertainty and a control buffer;
+  - about 15 m of reaction: 0.45 s of actuator delay, control cycle, radio latency and the allowance for a stale authority;
+  - about 14 m of braking mismatch: each vehicle plans as if the vehicle ahead brakes 1.1 × its rated braking, while counting on only 0.9 × its own.
+
+  None of this is about brick walls; it is the ordinary case of the vehicle ahead braking hard. A much larger gain needs much shorter gaps (truck-platooning trials run at about 0.3–0.5 s). Coordinated braking, now required in every SDR-Ready vehicle (D13), removes most of the last two terms:
+  - a braking command sent to a string of vehicles at once (by the road or V2V), so followers start braking with the leader instead of after it;
+  - a braking cap per string: no vehicle brakes harder than the weakest one behind it can match, except when its own guardian sees an obstacle.
+
+  With about 0.15 s of reaction left and no mismatch, the gap would be about 14 m, or about 8,500 veh/h per lane in theory against about 3,150 (an estimate, not modelled). Two things limit this. Anything that stops a vehicle dead (a brick-wall stop, a lost load, a crash ahead) would then hit more vehicles, though at lower speed differences. And the merge, not the lane, limits the corridor (item 2.7), so the corridor would gain much less than the lane.
+- **Do:**
+  - add a coordinated braking mode to the engine: braking broadcast to a string of vehicles (with latency and the radio loss of item 2.3), a braking cap per string, string length bounded by platoon breaks (`platoonBreakEvery`), and a gap rule that uses them. The gap behind trucks keeps its own rule (items 1.5, 6.1);
+  - run the demand sweep and the layouts of item 2.7, and find the gap at which the merge, not the gap, limits the corridor;
+  - repeat the brick-wall stop, the lost load and a string member that brakes less than announced (a silent brake fault), and record collisions and impact speeds;
+  - check the result against the criterion of item 6.1, and report the slipstream saving (item 5.2) at the shorter gaps.
+- **Done when:** SDR-04 states how much capacity coordinated braking adds on the corridor, what it does to brick-wall and lost-load outcomes, and whether it meets the criterion of item 6.1.
+
+---
+
 ## Suggested order
 
 Agreed on 2026-11-19: **settle the foundations first, then the factors.** The incident, weather and radio tests are what decided the separation policy, so they stay in the model; but until the foundations below are settled they are re-run at milestones only, not after every change.
@@ -243,3 +285,4 @@ Agreed on 2026-11-19: **settle the foundations first, then the factors.** The in
 5. **Then the factors again:** a full run of the extended set once the foundations are settled, and new factor work (2.10, 1.6, 3.6) after that.
 6. Section 4 in parallel throughout, where other people or hardware are needed.
 7. **Section 5 (environment and comfort)** can start at any time: it adds measurements and does not change how the road drives, except for a jerk limit if 5.3 finds one is needed. Item 5.1 first, since 5.2 builds on its energy model. Its tables belong in the extended set (3.7).
+8. **Section 6 (safety criterion and capacity ceiling)**, added on 2026-11-20. The risk-model part of item 6.1 can start at any time, since it needs no engine change; the choice of criterion is the user's to make once the per-hazard comparison is there. Item 6.2 changes how the road drives, so it comes after the foundations (step 3) and the core set (3.7).
